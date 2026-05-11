@@ -1,0 +1,18 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Beauty Coworking//Booking//RU
+BEGIN:VEVENT
+SUMMARY:Бронь в коворкинге «Девичьи дела»: К
+ ушетка 1 (у окна)
+DTSTART:20260513T060000
+DTEND:20260513T070000
+DESCRIPTION:
+LOCATION:ул. Республики\, 26
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:Напоминание: через 2 часа бронь Ку
+ шетка 1 (у окна)
+TRIGGER:-PT2H
+END:VALARM
+END:VEVENT
+END:VCALENDAR

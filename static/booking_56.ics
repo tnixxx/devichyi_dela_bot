@@ -1,0 +1,19 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Beauty Coworking//Booking//RU
+BEGIN:VEVENT
+SUMMARY:Бронь в коворкинге «Девичьи дела»: К
+ ушетка 2
+DTSTART:20260525T060000
+DTEND:20260526T220000
+DESCRIPTION:Бронирование с 25.05.2026 06:00 по 26.05.2026 2
+ 2:00
+LOCATION:ул. Республики\, 26
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:Напоминание: через 2 часа бронь Ку
+ шетка 2
+TRIGGER:-PT2H
+END:VALARM
+END:VEVENT
+END:VCALENDAR
