@@ -12,7 +12,7 @@ TEXTS = {
         'main_menu_btn': "🏠 Главное меню",
 
         # О коворкинге
-        'about_text': "📍 <b>Коворкинг «Девичьи дела»</b>\nАдрес: ул. Республики, 26\n🕒 Работаем ежедневно с 6:00 до 22:00\n📞 Контакт: @example\nПодробнее на сайте: example.com",
+        'about_text': "📍 <b>Коворкинг «Девичьи дела»</b>\nАдрес: г. Тюмень ул. Республики, 26\n🕒 Работаем ежедневно с 6:00 до 22:00\n📞 Контакт: @devichyi_dela",
 
         # Язык
         'choose_language': "Выберите язык:",
@@ -27,19 +27,23 @@ TEXTS = {
         'cat_dressing': "🎭 Гримерки",
         'no_workspaces': "В этой категории пока нет мест.",
         'workspace_not_found': "Место не найдено.",
+        'cat_couch_202': '🛏 Кушетки 202',
+        'cat_dressing_202': '🎭 Гримерки 202',
+        'cat_dressing_201': '🎭 Гримерки 201',
+        'cat_hairdresser_201': '💺 Кресла 201',
 
         # Выбор места
         'select_workspace': "Выберите место:",
         'prev_category': "⬅️ Предыдущая категория",
         'next_category': "Следующая категория ➡️",
-        'back_to_categories': "🔙 К категориям",
+        'back_to_categories': "⬅️ К категориям",
 
         # Типы аренды
         'choose_rental_type': "Выберите тип аренды:",
         'hourly': "⏱ Почасовая (1 час)",
         'daily': "☀️ На день (6:00-22:00)",
         'multiday': "📅 На несколько дней (фикс. ставка)",
-        'back_to_workspace': "🔙 Назад к месту",
+        'back_to_workspace': "⬅️ Назад к месту",
 
         # Календарь
         'choose_date': "Выберите дату:",
@@ -69,7 +73,7 @@ TEXTS = {
         'multiday_description': "с {start} по {end} (ежедневно 6:00-22:00)",
         'pay_stars': "⭐ Оплатить Stars",
         'pay_tbank': "💳 Т-Касса (заглушка)",
-        'back_to_rent_type_from_pay': "🔙 Назад к выбору типа",
+        'back_to_rent_type_from_pay': "⬅️ Назад к выбору типа",
 
         # Оплата и таймаут
         'booking_pending_timeout': "⏰ Время бронирования истекло. Пожалуйста, начните бронирование заново.",
@@ -143,7 +147,7 @@ TEXTS = {
         'main_menu_btn': "🏠 Main menu",
 
         # About coworking
-        'about_text': "📍 <b>'Devichyi dela' coworking</b>\nAddress: 26 Respubliki St.\n🕒 Open daily from 6:00 to 22:00\n📞 Contact: @example\nMore at: example.com",
+        'about_text': "📍 <b>'Devichyi dela' coworking</b>\nAddress: Tyumen, 26 Respubliki St.\n🕒 Open daily from 6:00 to 22:00\n📞 Contact: @devichyi_dela",
 
         # Language
         'choose_language': "Choose language:",
@@ -158,19 +162,23 @@ TEXTS = {
         'cat_dressing': "🎭 Makeup rooms",
         'no_workspaces': "No workspaces in this category yet.",
         'workspace_not_found': "Workspace not found.",
+        'cat_couch_202': '🛏 Couch 202',
+        'cat_dressing_202': '🎭 Makeup rooms 202',
+        'cat_dressing_201': '🎭 Makeup rooms 201',
+        'cat_hairdresser_201': '💺 Chairs 201',
 
         # Select workspace
         'select_workspace': "Select a workspace:",
         'prev_category': "⬅️ Previous category",
         'next_category': "Next category ➡️",
-        'back_to_categories': "🔙 Back to categories",
+        'back_to_categories': "⬅️ Back to categories",
 
         # Rental types
         'choose_rental_type': "Choose rental type:",
         'hourly': "⏱ Hourly (1 hour)",
         'daily': "☀️ Full day (6:00-22:00)",
         'multiday': "📅 Several days (fixed rate)",
-        'back_to_workspace': "🔙 Back to workspace",
+        'back_to_workspace': "⬅️ Back to workspace",
 
         # Calendar
         'choose_date': "Select a date:",
@@ -200,7 +208,7 @@ TEXTS = {
         'multiday_description': "from {start} to {end} (daily 6:00-22:00)",
         'pay_stars': "⭐ Pay with Stars",
         'pay_tbank': "💳 T‑Kassa (dummy)",
-        'back_to_rent_type_from_pay': "🔙 Back to rental type",
+        'back_to_rent_type_from_pay': "⬅️ Back to rental type",
 
         # Payment and timeout
         'booking_pending_timeout': "⏰ Booking time has expired. Please start the booking again.",

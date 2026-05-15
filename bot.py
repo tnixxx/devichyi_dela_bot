@@ -24,6 +24,8 @@ from locales import TEXTS
 
 load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
+# ADMIN_ID=os.getenv('ADMIN_ID')
+ADMIN_ID=621695401
 
 logging.basicConfig(level=logging.INFO)
 
@@ -36,16 +38,16 @@ WORK_START_HOUR = 6
 WORK_END_HOUR = 22
 SLOT_DURATION = 1
 
-DEFAULT_IMAGE = "AgACAgIAAxkBAAOuadflHkMQHyFsQ8yls6F2PoVrRd8AAnEQaxsJS8BKzjU4E0_lknIBAAMCAAN4AAM7BA"
+DEFAULT_IMAGE = "AgACAgIAAxkBAAIKGWoDdeLstxuZ4sNbiCKgZpNMQ_YjAAKHGmsbxScZSIR9rmw9nxejAQADAgADeQADOwQ"
 PUBLIC_URL = "https://ваш-домен.ngrok.io"   # замените на ваш реальный URL
 
 # ---------- Список категорий ----------
 CATEGORIES = [
-    {"id": "couch", "name": "🛏 Кушетки", "emoji": "🛏"},
-    {"id": "hairdresser", "name": "💇‍♀️ Парикмахерские места", "emoji": "💇‍♀️"},
-    {"id": "dressing", "name": "🎭 Гримерки", "emoji": "🎭"}
+    {"id": "couch_202", "name": "🛏 Кушетки 202", "emoji": "🛏"},
+    {"id": "dressing_202", "name": "🎭 Гримерки 202", "emoji": "🎭"},
+    {"id": "dressing_201", "name": "🎭 Гримерки 201", "emoji": "🎭"},
+    {"id": "hairdresser_201", "name": "💺 Кресла 201", "emoji": "💺"}
 ]
-
 # ---------- Список месяцев и годов ----------
 MONTHS = [
     "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
@@ -273,6 +275,9 @@ async def show_category_album(chat_id: int, state: FSMContext, user_id: int):
     await state.update_data(category_index=idx)
     category = CATEGORIES[idx]
 
+    # Локализованное название категории (опционально, если используете get_text)
+    category_name = get_text(f'cat_{category["id"]}', lang)
+
     pool = dp['db_pool']
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -297,7 +302,11 @@ async def show_category_album(chat_id: int, state: FSMContext, user_id: int):
         InlineKeyboardButton(text=get_text('prev_category', lang), callback_data="cat_prev"),
         InlineKeyboardButton(text=get_text('next_category', lang), callback_data="cat_next")
     ]
-    ws_rows = [[InlineKeyboardButton(text=get_workspace_name(ws['name'], lang), callback_data=f"ws_select_{ws['id']}")] for ws in workspaces_info]
+
+    # Изменение: каждая кнопка места на новой строке (вместо группировки по две)
+    ws_buttons = [InlineKeyboardButton(text=get_workspace_name(ws['name'], lang), callback_data=f"ws_select_{ws['id']}") for ws in workspaces_info]
+    ws_rows = [[btn] for btn in ws_buttons]   # каждая кнопка в отдельном списке
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         nav_buttons,
         *ws_rows,
@@ -378,29 +387,35 @@ async def show_workspace_detail(chat_id: int, state: FSMContext, user_id: int):
         await bot.send_message(chat_id, get_text('workspace_not_found', lang))
         await state.clear()
         return
+    if row:
+        logging.info(f"DEBUG: description for id {workspace_id} = {row['description']}")
 
     ws = dict(row)
     await state.update_data(selected_workspace=ws)
+
+    # Локализованное название места
+    localized_name = get_workspace_name(ws['name'], lang)
+
+    caption_text = (
+        f"<b>{localized_name}</b>\n"
+        f"{ws['description']}\n\n"
+        f"{get_text('price_per_hour', lang)}: {ws['price_per_hour']} руб/час\n"
+        f"{get_text('price_per_day', lang)}: {ws['price_per_day']} руб\n"
+        f"{get_text('price_per_multi_day', lang)}: {ws['price_per_multi_day']} руб/сутки"
+    )
 
     media_group = []
     for i in range(1, 4):
         img_id = ws.get(f'image_url_{i}')
         if not img_id:
             img_id = DEFAULT_IMAGE
-        media_group.append(InputMediaPhoto(media=img_id))
+        if i == 1:
+            media_group.append(InputMediaPhoto(media=img_id, caption=caption_text, parse_mode="HTML"))
+        else:
+            media_group.append(InputMediaPhoto(media=img_id))
+
     album_msgs = await bot.send_media_group(chat_id, media=media_group)
     detail_album_msg_ids = [msg.message_id for msg in album_msgs]
-
-    # Локализованное название места
-    localized_name = get_workspace_name(ws['name'], lang)
-
-    caption = (
-        f"🪑 <b>{localized_name}</b>\n"
-        f"{ws['description']}\n\n"
-        f"💰 {get_text('price_per_hour', lang)}: {ws['price_per_hour']} руб/час\n"
-        f"💰 {get_text('price_per_day', lang)}: {ws['price_per_day']} руб\n"
-        f"💰 {get_text('price_per_multi_day', lang)}: {ws['price_per_multi_day']} руб/сутки"
-    )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=get_text('hourly', lang), callback_data="rent_hourly", style="primary")],
@@ -1412,6 +1427,23 @@ async def debug_unhandled(callback: CallbackQuery):
         await callback.answer(get_text('unhandled_error', lang), show_alert=True)
     except:
         pass
+
+@dp.message(Command("getfileid"))
+async def cmd_getfileid(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ У вас нет прав для этой команды.")
+        return
+    await state.update_data(waiting_for_fileid=True)
+    await message.answer("📸 Отправьте мне одно фото, и я пришлю его file_id.")
+
+@dp.message(F.photo)
+async def photo_handler(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("waiting_for_fileid"):
+        return  # игнорируем фото, если не в режиме получения file_id
+    await state.update_data(waiting_for_fileid=False)
+    file_id = message.photo[-1].file_id
+    await message.answer(f"`{file_id}`", parse_mode="Markdown")
 
 # ---------- Запуск ----------
 async def main():

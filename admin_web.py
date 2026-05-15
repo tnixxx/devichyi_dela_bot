@@ -8,6 +8,7 @@ import hashlib
 import base64
 import os
 from dotenv import load_dotenv
+import subprocess
 
 load_dotenv()
 
@@ -223,7 +224,9 @@ BASE_HTML = """
                 <a class="nav-link" href="/admin/masters">Мастера</a>
                 <a class="nav-link" href="/admin/statistics">Статистика</a>
                 <a class="nav-link" href="/admin/finance">Финансы</a>
+                <a class="nav-link" href="/admin/logs">Логи</a>
                 <a class="nav-link" href="/logout">Выйти</a>
+                
             </div>
         </div>
     </nav>
@@ -390,7 +393,7 @@ async def list_workspaces(request: Request, auth=Depends(authenticate)):
 
 @app.get("/admin/workspaces/add", response_class=HTMLResponse)
 async def add_workspace_form(auth=Depends(authenticate)):
-    content = '<h2>Добавить место</h2><form method="post"><div class="mb-3"><label>Название</label><input type="text" name="name" class="form-control" required></div><div class="mb-3"><label>Описание</label><textarea name="description" class="form-control"></textarea></div><div class="mb-3"><label>Категория</label><select name="category" class="form-control"><option value="couch">Кушетки</option><option value="hairdresser">Парикмахерские</option><option value="dressing">Гримерки</option></select></div><div class="mb-3"><label>Цена почасовая (руб)</label><input type="number" name="price_per_hour" class="form-control" required></div><div class="mb-3"><label>Цена на день (руб)</label><input type="number" name="price_per_day" class="form-control" required></div><div class="mb-3"><label>Цена многодневная (руб/сутки)</label><input type="number" name="price_per_multi_day" class="form-control" required></div><div class="mb-3"><label>Фото 1 (file_id)</label><input type="text" name="image_url_1" class="form-control"></div><div class="mb-3"><label>Фото 2</label><input type="text" name="image_url_2" class="form-control"></div><div class="mb-3"><label>Фото 3</label><input type="text" name="image_url_3" class="form-control"></div><button type="submit" class="btn btn-success">Сохранить</button><a href="/admin/workspaces" class="btn btn-secondary">Отмена</a></form>'
+    content = '<h2>Добавить место</h2><form method="post"><div class="mb-3"><label>Название</label><input type="text" name="name" class="form-control" required></div><div class="mb-3"><label>Описание</label><textarea name="description" class="form-control"></textarea></div><div class="mb-3"><label>Категория</label><select name="category" class="form-control"><option value="couch_202">🛏 Кушетки 202</option><option value="dressing_202">🎭 Гримерки 202</option><option value="dressing_201">🎭 Гримерки 201</option><option value="hairdresser_201">💺 Кресла 201</option></select></div><div class="mb-3"><label>Цена почасовая (руб)</label><input type="number" name="price_per_hour" class="form-control" required></div><div class="mb-3"><label>Цена на день (руб)</label><input type="number" name="price_per_day" class="form-control" required></div><div class="mb-3"><label>Цена многодневная (руб/сутки)</label><input type="number" name="price_per_multi_day" class="form-control" required></div><div class="mb-3"><label>Фото 1 (file_id)</label><input type="text" name="image_url_1" class="form-control"></div><div class="mb-3"><label>Фото 2</label><input type="text" name="image_url_2" class="form-control"></div><div class="mb-3"><label>Фото 3</label><input type="text" name="image_url_3" class="form-control"></div><button type="submit" class="btn btn-success">Сохранить</button><a href="/admin/workspaces" class="btn btn-secondary">Отмена</a></form>'
     return render("Добавить место", content)
 
 @app.post("/admin/workspaces/add")
@@ -684,3 +687,115 @@ async def finance(auth=Depends(authenticate)):
 @app.get("/logout")
 async def logout():
     return RedirectResponse(url="/admin")
+
+@app.get("/admin/logs", response_class=HTMLResponse)
+async def logs_dashboard(auth=Depends(authenticate)):
+    # Страница для просмотра логов
+    content = """
+    <h2>Системные логи</h2>
+    <div class="row">
+        <div class="col-md-3">
+            <div class="mb-3">
+                <label>Сервис</label>
+                <select id="service" class="form-control">
+                    <option value="bot">Telegram бот</option>
+                    <option value="admin">Админ-панель</option>
+                    <option value="nginx">Nginx (ошибки)</option>
+                    <option value="nginx-access">Nginx (доступ)</option>
+                </select>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="mb-3">
+                <label>Количество строк</label>
+                <input type="number" id="lines" value="100" class="form-control">
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="mb-3">
+                <label>&nbsp;</label>
+                <button id="fetchLogsBtn" class="btn btn-primary d-block">Показать логи</button>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="mb-3">
+                <label>&nbsp;</label>
+                <button id="autoRefreshBtn" class="btn btn-secondary d-block">Автообновление (выкл)</button>
+            </div>
+        </div>
+    </div>
+    <div class="row">
+        <div class="col-md-12">
+            <pre id="logContent" style="background: #f4f4f4; padding: 10px; height: 500px; overflow-y: scroll;"></pre>
+        </div>
+    </div>
+    <script>
+        let autoRefresh = false;
+        let intervalId = null;
+        const serviceSelect = document.getElementById('service');
+        const linesInput = document.getElementById('lines');
+        const fetchBtn = document.getElementById('fetchLogsBtn');
+        const autoRefreshBtn = document.getElementById('autoRefreshBtn');
+        const logContent = document.getElementById('logContent');
+
+        async function fetchLogs() {
+            const service = serviceSelect.value;
+            const lines = linesInput.value;
+            const response = await fetch(`/admin/api/logs?service=${service}&lines=${lines}`);
+            const data = await response.json();
+            if (data.logs) {
+                logContent.textContent = data.logs.join('\\n');
+            } else {
+                logContent.textContent = 'Ошибка: ' + (data.error || 'неизвестная ошибка');
+            }
+        }
+
+        function toggleAutoRefresh() {
+            autoRefresh = !autoRefresh;
+            if (autoRefresh) {
+                intervalId = setInterval(fetchLogs, 5000); // каждые 5 секунд
+                autoRefreshBtn.textContent = 'Автообновление (вкл)';
+                autoRefreshBtn.classList.remove('btn-secondary');
+                autoRefreshBtn.classList.add('btn-warning');
+            } else {
+                if (intervalId) clearInterval(intervalId);
+                autoRefreshBtn.textContent = 'Автообновление (выкл)';
+                autoRefreshBtn.classList.remove('btn-warning');
+                autoRefreshBtn.classList.add('btn-secondary');
+            }
+        }
+
+        fetchBtn.addEventListener('click', fetchLogs);
+        autoRefreshBtn.addEventListener('click', toggleAutoRefresh);
+        fetchLogs(); // первая загрузка
+    </script>
+    """
+    return render("Логи", content)
+
+@app.get("/admin/api/logs")
+async def api_get_logs(service: str, lines: int = 100, auth=Depends(authenticate)):
+    allowed_services = ['bot', 'admin', 'nginx', 'nginx-access']
+    if service not in allowed_services:
+        return JSONResponse({"error": "Invalid service"}, status_code=400)
+    
+    try:
+        if service == 'bot':
+            cmd = ["journalctl", "-u", "devichyi_bot", "-n", str(lines), "--no-pager"]
+        elif service == 'admin':
+            cmd = ["journalctl", "-u", "devichyi_admin", "-n", str(lines), "--no-pager"]
+        elif service == 'nginx':
+            cmd = ["tail", "-n", str(lines), "/var/log/nginx/error.log"]
+        elif service == 'nginx-access':
+            cmd = ["tail", "-n", str(lines), "/var/log/nginx/access.log"]
+        else:
+            return JSONResponse({"error": "Unknown service"}, status_code=400)
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            logs = result.stderr.split('\n')
+        else:
+            logs = result.stdout.split('\n')
+        logs = logs[-lines:]
+        return JSONResponse({"logs": logs})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
