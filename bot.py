@@ -126,7 +126,7 @@ async def start_web_server():
 
 async def cleanup_expired_pending():
     while True:
-        await asyncio.sleep(60)
+        await asyncio.sleep(120)
         pool = dp['db_pool']
         if not pool:
             continue
@@ -757,10 +757,16 @@ async def show_available_slots(chat_id: int, state: FSMContext, user_id: int):
     pool = dp['db_pool']
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     slots = []
+    now = datetime.now()
     async with pool.acquire() as conn:
         for hour in range(WORK_START_HOUR, WORK_END_HOUR):
             slot_start = datetime.combine(selected_date, time(hour, 0))
             slot_end = slot_start + timedelta(hours=1)
+
+            # Валидация: если дата сегодня и время уже прошло (с запасом 15 минут)
+            if selected_date == now.date() and slot_start <= now + timedelta(minutes=15):
+                continue
+
             conflicting = await conn.fetchval("""
                 SELECT 1 FROM bookings
                 WHERE workspace_id = $1
@@ -768,11 +774,13 @@ async def show_available_slots(chat_id: int, state: FSMContext, user_id: int):
                   AND tstzrange(start_time, end_time) && tstzrange($2, $3)
                 LIMIT 1
             """, workspace_id, slot_start, slot_end)
+
             if not conflicting:
                 btn_text = f"{hour:02d}:00"
                 callback_data = f"slot_{slot_start.isoformat()}"
                 kb.inline_keyboard.append([InlineKeyboardButton(text=btn_text, callback_data=callback_data)])
                 slots.append(slot_start)
+
     if not kb.inline_keyboard:
         text = get_text('no_free_hours', lang)
         back_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -782,6 +790,7 @@ async def show_available_slots(chat_id: int, state: FSMContext, user_id: int):
         control_msg_id = data.get('dynamic_msg_id')
         await bot.edit_message_text(text=text, chat_id=chat_id, message_id=control_msg_id, reply_markup=back_kb)
         return
+
     text = get_text('choose_start_time', lang).format(selected_date.strftime('%d.%m.%Y'))
     kb.inline_keyboard.append([InlineKeyboardButton(text=get_text('back_to_date', lang), callback_data="back_to_date")])
     kb.inline_keyboard.append([InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="back_to_main_from_booking")])
@@ -858,6 +867,17 @@ async def check_daily_availability(chat_id: int, state: FSMContext, user_id: int
     data = await state.get_data()
     workspace_id = data['selected_workspace']['id']
     selected_date = data['selected_date']
+
+    if selected_date == datetime.now().date() and datetime.now().time() > time(WORK_START_HOUR, 0):
+        text = get_text('day_already_started', lang)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=get_text('back_to_date', lang), callback_data="back_to_date")],
+            [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="back_to_main_from_booking")]
+        ])
+        control_msg_id = data.get('dynamic_msg_id')
+        await bot.edit_message_text(text=text, chat_id=chat_id, message_id=control_msg_id, reply_markup=kb)
+        return
+
     pool = dp['db_pool']
     async with pool.acquire() as conn:
         conflicting = await conn.fetchval("""
@@ -867,6 +887,7 @@ async def check_daily_availability(chat_id: int, state: FSMContext, user_id: int
               AND DATE(start_time) = $2
             LIMIT 1
         """, workspace_id, selected_date)
+
     if conflicting:
         text = get_text('date_taken', lang).format(selected_date.strftime('%d.%m.%Y'))
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -947,6 +968,7 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
     rent_type = data['rent_type']
     total_price = 0
     description = ""
+    
     if rent_type == "hourly":
         type_name = get_text('hourly', lang)
         start_time = data['start_time']
@@ -954,6 +976,7 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
         hours = (end_time - start_time).seconds // 3600
         total_price = ws['price_per_hour'] * hours
         description = f"{start_time.strftime('%d.%m.%Y %H:%M')} – {end_time.strftime('%H:%M')}"
+        stars_price = ws.get('price_per_hour_stars', 0)
     elif rent_type == "daily":
         type_name = get_text('daily', lang)
         selected_date = data['selected_date']
@@ -961,7 +984,8 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
         end_time = datetime.combine(selected_date, time(WORK_END_HOUR, 0))
         total_price = ws['price_per_day']
         description = get_text('daily_description', lang).format(date=selected_date.strftime('%d.%m.%Y'))
-    else:
+        stars_price = ws.get('price_per_day_stars', 0)
+    else:  # multiday
         type_name = get_text('multiday', lang)
         start_date = data['start_date']
         end_date = data['end_date']
@@ -969,25 +993,37 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
         start_time = datetime.combine(start_date, time(WORK_START_HOUR, 0))
         end_time = datetime.combine(end_date, time(WORK_END_HOUR, 0))
         total_price = ws['price_per_multi_day'] * days
-        description = get_text('multiday_description', lang).format(start=start_date.strftime('%d.%m.%Y'), end=end_date.strftime('%d.%m.%Y'))
+        description = get_text('multiday_description', lang).format(
+            start=start_date.strftime('%d.%m.%Y'),
+            end=end_date.strftime('%d.%m.%Y')
+        )
+        stars_price = ws.get('price_per_multi_day_stars', 0)
 
+    # Сохраняем временные данные для оплаты
     await state.update_data(
         temp_booking={
             "workspace_id": ws['id'],
             "start_time": start_time,
             "end_time": end_time,
             "total_price": total_price,
+            "rent_type": rent_type,
+            "workspace_name": ws['name'],
             "description": description,
-            "type_name": type_name,
-            "workspace_name": ws['name']
+            "type_name": type_name
         }
     )
+
+    if stars_price:
+        stars_line = get_text('booking_summary_stars', lang).format(stars=stars_price)
+    else:
+        stars_line = ""
 
     text = get_text('booking_summary', lang).format(
         workspace=ws['name'],
         type=type_name,
         description=description,
-        total=total_price
+        total=total_price,
+        stars_line=stars_line
     )
 
     # Проверка конфликта перед показом окна оплаты
@@ -1051,6 +1087,7 @@ async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
                 callback.from_user.id, callback.from_user.full_name
             )
         master_id = master['id']
+
         conflicting = await conn.fetchval("""
             SELECT 1 FROM bookings
             WHERE workspace_id = $1
@@ -1058,11 +1095,14 @@ async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
               AND tstzrange(start_time, end_time) && tstzrange($2, $3)
             LIMIT 1
         """, temp['workspace_id'], temp['start_time'], temp['end_time'])
+
         if conflicting:
             await callback.message.edit_text("❌ К сожалению, это время уже занято. Попробуйте ещё раз.")
             await state.clear()
             await callback.answer()
             return
+
+        # Создаём бронь со статусом pending
         booking = await conn.fetchrow("""
             INSERT INTO bookings (master_id, workspace_id, start_time, end_time, status, payment_method, payment_status, created_at, total_price)
             VALUES ($1, $2, $3, $4, 'pending', 'stars', 'pending', now(), $5)
@@ -1071,22 +1111,74 @@ async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
         booking_id = booking['id']
         await state.update_data(booking_id=booking_id)
 
-    stars_amount = 1   # тестовая цена
+    # Получаем цену в звёздах в зависимости от типа аренды
+    ws = data['selected_workspace']
+    rent_type = temp['rent_type']  # 'hourly', 'daily', 'multiday'
+    if rent_type == 'hourly':
+        stars_amount = ws.get('price_per_hour_stars')
+    elif rent_type == 'daily':
+        stars_amount = ws.get('price_per_day_stars')
+    else:
+        stars_amount = ws.get('price_per_multi_day_stars')
+
+    # Если цена в звёздах не задана (0 или None), используем рублёвую цену как звёзды
+    if not stars_amount:
+        stars_amount = int(temp['total_price'])
+
     payload = f"booking_{uuid.uuid4().hex}"
     await state.update_data(payment_payload=payload, user_id=callback.from_user.id)
 
-    await callback.message.answer_invoice(
-        title="Бронирование места",
-        description=temp['description'],
+    lang = await get_user_language(callback.from_user.id)
+    invoice = await callback.message.answer_invoice(
+        title=get_text('invoice_title', lang),
+        description=get_text('invoice_description', lang),
         payload=payload,
         provider_token="",
         currency="XTR",
-        prices=[LabeledPrice(label="Аренда места", amount=stars_amount)],
+        prices=[LabeledPrice(label=get_text('invoice_label', lang), amount=stars_amount)],
         need_name=False,
         need_phone_number=False,
         need_email=False
     )
+    await state.update_data(invoice_msg_id=invoice.message_id)
+
+    # Кнопка отмены
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=get_text('cancel_booking_btn', lang), callback_data=f"cancel_booking_{booking_id}")]
+    ])
+    cancel_msg = await callback.message.answer(
+        get_text('cancel_booking_prompt', lang),
+        reply_markup=cancel_kb
+    )
+    await state.update_data(cancel_msg_id=cancel_msg.message_id)
+
+    asyncio.create_task(expire_booking_task(booking_id, callback.message.chat.id, invoice.message_id, callback.from_user.id))
+
     await callback.answer()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("cancel_booking_"))
+async def cancel_booking(callback: CallbackQuery, state: FSMContext):
+    booking_id = int(callback.data.split("_")[2])
+    lang = await get_user_language(callback.from_user.id)
+    pool = dp['db_pool']
+    async with pool.acquire() as conn:
+        status = await conn.fetchval("SELECT status FROM bookings WHERE id = $1", booking_id)
+        if status == 'pending':
+            await conn.execute("DELETE FROM bookings WHERE id = $1", booking_id)
+            # Удаляем сообщение с кнопкой отмены
+            await callback.message.delete()
+            # Удаляем сообщение с инвойсом (по возможности)
+            data = await state.get_data()
+            invoice_msg_id = data.get('invoice_msg_id')
+            if invoice_msg_id:
+                try:
+                    await bot.delete_message(chat_id=callback.message.chat.id, message_id=invoice_msg_id)
+                except:
+                    pass
+            await callback.answer(get_text('booking_cancelled', lang), show_alert=True)
+        else:
+            await callback.answer(get_text('booking_already_paid', lang), show_alert=True)
+    await state.clear()
 
 # Обработка предварительного запроса
 @dp.pre_checkout_query()

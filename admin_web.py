@@ -9,6 +9,9 @@ import base64
 import os
 from dotenv import load_dotenv
 import subprocess
+import csv
+from io import StringIO
+from fastapi.responses import StreamingResponse
 
 load_dotenv()
 
@@ -103,6 +106,15 @@ BASE_HTML = """
         .booking-row {{ cursor: pointer; }}
         .booking-row:hover {{ background-color: rgba(0, 0, 0, 0.05); }}
         .dark-theme .booking-row:hover {{ background-color: rgba(255, 255, 255, 0.1); }}
+        .dark-theme #logContent {
+            background-color: #1e1e1e !important;
+            color: #f8f9fa !important;
+            border-color: #444;
+        }
+        .dark-theme .modal-content {
+            background-color: #2c3034;
+            color: #f8f9fa;
+        }
     </style>
     <script>
         function setTheme(theme) {{
@@ -225,6 +237,7 @@ BASE_HTML = """
                 <a class="nav-link" href="/admin/statistics">Статистика</a>
                 <a class="nav-link" href="/admin/finance">Финансы</a>
                 <a class="nav-link" href="/admin/logs">Логи</a>
+                <a href="/admin/export/workspaces" class="btn btn-sm btn-secondary">Экспорт CSV</a>
                 <a class="nav-link" href="/logout">Выйти</a>
                 
             </div>
@@ -393,27 +406,132 @@ async def list_workspaces(request: Request, auth=Depends(authenticate)):
 
 @app.get("/admin/workspaces/add", response_class=HTMLResponse)
 async def add_workspace_form(auth=Depends(authenticate)):
-    content = '<h2>Добавить место</h2><form method="post"><div class="mb-3"><label>Название</label><input type="text" name="name" class="form-control" required></div><div class="mb-3"><label>Описание</label><textarea name="description" class="form-control"></textarea></div><div class="mb-3"><label>Категория</label><select name="category" class="form-control"><option value="couch_202">🛏 Кушетки 202</option><option value="dressing_202">🎭 Гримерки 202</option><option value="dressing_201">🎭 Гримерки 201</option><option value="hairdresser_201">💺 Кресла 201</option></select></div><div class="mb-3"><label>Цена почасовая (руб)</label><input type="number" name="price_per_hour" class="form-control" required></div><div class="mb-3"><label>Цена на день (руб)</label><input type="number" name="price_per_day" class="form-control" required></div><div class="mb-3"><label>Цена многодневная (руб/сутки)</label><input type="number" name="price_per_multi_day" class="form-control" required></div><div class="mb-3"><label>Фото 1 (file_id)</label><input type="text" name="image_url_1" class="form-control"></div><div class="mb-3"><label>Фото 2</label><input type="text" name="image_url_2" class="form-control"></div><div class="mb-3"><label>Фото 3</label><input type="text" name="image_url_3" class="form-control"></div><button type="submit" class="btn btn-success">Сохранить</button><a href="/admin/workspaces" class="btn btn-secondary">Отмена</a></form>'
+    content = """
+    <h2>Добавить место</h2>
+    <form method="post">
+        <div class="mb-3"><label>Название</label><input type="text" name="name" class="form-control" required></div>
+        <div class="mb-3"><label>Описание</label><textarea name="description" class="form-control"></textarea></div>
+        <div class="mb-3"><label>Категория</label>
+            <select name="category" class="form-control">
+                <option value="couch_202">🛏 Кушетки 202</option>
+                <option value="dressing_202">🎭 Гримерки 202</option>
+                <option value="dressing_201">🎭 Гримерки 201</option>
+                <option value="hairdresser_201">💺 Кресла 201</option>
+            </select>
+        </div>
+        <div class="mb-3"><label>Цена почасовая (руб)</label><input type="number" name="price_per_hour" class="form-control" required></div>
+        <div class="mb-3"><label>Цена почасовая (звёзды)</label><input type="number" step="0.01" name="price_per_hour_stars" class="form-control" value="0"></div>
+        <div class="mb-3"><label>Цена на день (руб)</label><input type="number" name="price_per_day" class="form-control" required></div>
+        <div class="mb-3"><label>Цена на день (звёзды)</label><input type="number" step="0.01" name="price_per_day_stars" class="form-control" value="0"></div>
+        <div class="mb-3"><label>Цена многодневная (руб/сутки)</label><input type="number" name="price_per_multi_day" class="form-control" required></div>
+        <div class="mb-3"><label>Цена многодневная (звёзды)</label><input type="number" step="0.01" name="price_per_multi_day_stars" class="form-control" value="0"></div>
+        <div class="mb-3"><label>Фото 1 (file_id)</label><input type="text" name="image_url_1" class="form-control"></div>
+        <div class="mb-3"><label>Фото 2</label><input type="text" name="image_url_2" class="form-control"></div>
+        <div class="mb-3"><label>Фото 3</label><input type="text" name="image_url_3" class="form-control"></div>
+        <button type="submit" class="btn btn-success">Сохранить</button>
+        <a href="/admin/workspaces" class="btn btn-secondary">Отмена</a>
+    </form>
+    """
     return render("Добавить место", content)
 
 @app.post("/admin/workspaces/add")
-async def add_workspace(name: str=Form(...), description: str=Form(""), category: str=Form(...), price_per_hour: int=Form(...), price_per_day: int=Form(...), price_per_multi_day: int=Form(...), image_url_1: str=Form(""), image_url_2: str=Form(""), image_url_3: str=Form(""), auth=Depends(authenticate)):
+async def add_workspace(
+    name: str = Form(...),
+    description: str = Form(""),
+    category: str = Form(...),
+    price_per_hour: int = Form(...),
+    price_per_day: int = Form(...),
+    price_per_multi_day: int = Form(...),
+    price_per_hour_stars: float = Form(0),
+    price_per_day_stars: float = Form(0),
+    price_per_multi_day_stars: float = Form(0),
+    image_url_1: str = Form(""),
+    image_url_2: str = Form(""),
+    image_url_3: str = Form(""),
+    auth=Depends(authenticate)
+):
     async with app.state.pool.acquire() as conn:
-        await conn.execute("INSERT INTO workspaces (name,description,category,price_per_hour,price_per_day,price_per_multi_day,image_url_1,image_url_2,image_url_3) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", name,description,category,price_per_hour,price_per_day,price_per_multi_day,image_url_1,image_url_2,image_url_3)
+        await conn.execute("""
+            INSERT INTO workspaces 
+            (name, description, category, price_per_hour, price_per_day, price_per_multi_day, 
+             price_per_hour_stars, price_per_day_stars, price_per_multi_day_stars,
+             image_url_1, image_url_2, image_url_3)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        """, name, description, category, price_per_hour, price_per_day, price_per_multi_day,
+           price_per_hour_stars, price_per_day_stars, price_per_multi_day_stars,
+           image_url_1, image_url_2, image_url_3)
     return RedirectResponse(url="/admin/workspaces", status_code=303)
 
 @app.get("/admin/workspaces/edit/{wid}", response_class=HTMLResponse)
 async def edit_workspace_form(request: Request, wid: int, auth=Depends(authenticate)):
     async with app.state.pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM workspaces WHERE id = $1", wid)
-        if not row: raise HTTPException(404)
-    content = f"<h2>Редактировать место</h2><form method='post'><div class='mb-3'><label>Название</label><input type='text' name='name' class='form-control' value='{row['name']}' required></div><div class='mb-3'><label>Описание</label><textarea name='description' class='form-control'>{row['description'] or ''}</textarea></div><div class='mb-3'><label>Категория</label><select name='category' class='form-control'><option value='couch' {'selected' if row['category']=='couch' else ''}>Кушетки</option><option value='hairdresser' {'selected' if row['category']=='hairdresser' else ''}>Парикмахерские</option><option value='dressing' {'selected' if row['category']=='dressing' else ''}>Гримерки</option></select></div><div class='mb-3'><label>Цена почасовая (руб)</label><input type='number' name='price_per_hour' class='form-control' value='{row['price_per_hour']}' required></div><div class='mb-3'><label>Цена на день (руб)</label><input type='number' name='price_per_day' class='form-control' value='{row['price_per_day']}' required></div><div class='mb-3'><label>Цена многодневная (руб/сутки)</label><input type='number' name='price_per_multi_day' class='form-control' value='{row['price_per_multi_day']}' required></div><div class='mb-3'><label>Фото 1 (file_id)</label><input type='text' name='image_url_1' class='form-control' value='{row['image_url_1'] or ''}'></div><div class='mb-3'><label>Фото 2</label><input type='text' name='image_url_2' class='form-control' value='{row['image_url_2'] or ''}'></div><div class='mb-3'><label>Фото 3</label><input type='text' name='image_url_3' class='form-control' value='{row['image_url_3'] or ''}'></div><button type='submit' class='btn btn-success'>Сохранить</button><a href='/admin/workspaces' class='btn btn-secondary'>Отмена</a></form>"
+        if not row:
+            raise HTTPException(404)
+    content = f"""
+    <h2>Редактировать место</h2>
+    <form method="post">
+        <div class="mb-3"><label>Название</label><input type="text" name="name" class="form-control" value="{row['name']}" required></div>
+        <div class="mb-3"><label>Описание</label><textarea name="description" class="form-control">{row['description'] or ''}</textarea></div>
+        <div class="mb-3"><label>Категория</label>
+            <select name="category" class="form-control">
+                <option value="couch_202" {'selected' if row['category']=='couch_202' else ''}>🛏 Кушетки 202</option>
+                <option value="dressing_202" {'selected' if row['category']=='dressing_202' else ''}>🎭 Гримерки 202</option>
+                <option value="dressing_201" {'selected' if row['category']=='dressing_201' else ''}>🎭 Гримерки 201</option>
+                <option value="hairdresser_201" {'selected' if row['category']=='hairdresser_201' else ''}>💺 Кресла 201</option>
+            </select>
+        </div>
+        <div class="mb-3"><label>Цена почасовая (руб)</label><input type="number" name="price_per_hour" class="form-control" value="{row['price_per_hour']}" required></div>
+        <div class="mb-3"><label>Цена почасовая (звёзды)</label><input type="number" step="0.01" name="price_per_hour_stars" class="form-control" value="{row['price_per_hour_stars'] or 0}"></div>
+        <div class="mb-3"><label>Цена на день (руб)</label><input type="number" name="price_per_day" class="form-control" value="{row['price_per_day']}" required></div>
+        <div class="mb-3"><label>Цена на день (звёзды)</label><input type="number" step="0.01" name="price_per_day_stars" class="form-control" value="{row['price_per_day_stars'] or 0}"></div>
+        <div class="mb-3"><label>Цена многодневная (руб/сутки)</label><input type="number" name="price_per_multi_day" class="form-control" value="{row['price_per_multi_day']}" required></div>
+        <div class="mb-3"><label>Цена многодневная (звёзды)</label><input type="number" step="0.01" name="price_per_multi_day_stars" class="form-control" value="{row['price_per_multi_day_stars'] or 0}"></div>
+        <div class="mb-3"><label>Фото 1 (file_id)</label><input type="text" name="image_url_1" class="form-control" value="{row['image_url_1'] or ''}"></div>
+        <div class="mb-3"><label>Фото 2</label><input type="text" name="image_url_2" class="form-control" value="{row['image_url_2'] or ''}"></div>
+        <div class="mb-3"><label>Фото 3</label><input type="text" name="image_url_3" class="form-control" value="{row['image_url_3'] or ''}"></div>
+        <button type="submit" class="btn btn-success">Сохранить</button>
+        <a href="/admin/workspaces" class="btn btn-secondary">Отмена</a>
+    </form>
+    """
     return render("Редактировать место", content)
 
 @app.post("/admin/workspaces/edit/{wid}")
-async def edit_workspace(wid: int, name: str=Form(...), description: str=Form(""), category: str=Form(...), price_per_hour: int=Form(...), price_per_day: int=Form(...), price_per_multi_day: int=Form(...), image_url_1: str=Form(""), image_url_2: str=Form(""), image_url_3: str=Form(""), auth=Depends(authenticate)):
+async def edit_workspace(
+    wid: int,
+    name: str = Form(...),
+    description: str = Form(""),
+    category: str = Form(...),
+    price_per_hour: int = Form(...),
+    price_per_day: int = Form(...),
+    price_per_multi_day: int = Form(...),
+    price_per_hour_stars: float = Form(0),
+    price_per_day_stars: float = Form(0),
+    price_per_multi_day_stars: float = Form(0),
+    image_url_1: str = Form(""),
+    image_url_2: str = Form(""),
+    image_url_3: str = Form(""),
+    auth=Depends(authenticate)
+):
     async with app.state.pool.acquire() as conn:
-        await conn.execute("UPDATE workspaces SET name=$1, description=$2, category=$3, price_per_hour=$4, price_per_day=$5, price_per_multi_day=$6, image_url_1=$7, image_url_2=$8, image_url_3=$9 WHERE id=$10", name,description,category,price_per_hour,price_per_day,price_per_multi_day,image_url_1,image_url_2,image_url_3,wid)
+        await conn.execute("""
+            UPDATE workspaces SET
+                name = $1,
+                description = $2,
+                category = $3,
+                price_per_hour = $4,
+                price_per_day = $5,
+                price_per_multi_day = $6,
+                price_per_hour_stars = $7,
+                price_per_day_stars = $8,
+                price_per_multi_day_stars = $9,
+                image_url_1 = $10,
+                image_url_2 = $11,
+                image_url_3 = $12
+            WHERE id = $13
+        """, name, description, category, price_per_hour, price_per_day, price_per_multi_day,
+           price_per_hour_stars, price_per_day_stars, price_per_multi_day_stars,
+           image_url_1, image_url_2, image_url_3, wid)
     return RedirectResponse(url="/admin/workspaces", status_code=303)
 
 @app.get("/admin/workspaces/delete/{wid}")
@@ -425,11 +543,19 @@ async def delete_workspace(wid: int, auth=Depends(authenticate)):
 # ------------------- Бронирования -------------------
 @app.get("/admin/bookings", response_class=HTMLResponse)
 async def list_bookings(request: Request, auth=Depends(authenticate)):
+    # Получаем параметры фильтрации и сортировки
+    filter_text = request.query_params.get('filter', '').strip()
     sort = request.query_params.get('sort', 'created_at')
     order = request.query_params.get('order', 'desc')
-    if order not in ('asc','desc'): order='desc'
+    status_filter = request.query_params.get('status', '')
+    workspace_id_filter = request.query_params.get('workspace_id', '')
+
+    if order not in ('asc', 'desc'):
+        order = 'desc'
     allowed_sort = ['created_at', 'start_time', 'end_time', 'workspace_name', 'type', 'hours', 'days', 'master_name', 'price', 'total_price', 'id', 'status']
-    if sort not in allowed_sort: sort='created_at'
+    if sort not in allowed_sort:
+        sort = 'created_at'
+
     sql_sort_map = {
         'created_at': 'b.created_at',
         'start_time': 'b.start_time',
@@ -445,7 +571,9 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
         'status': 'b.status'
     }
     order_by = f"{sql_sort_map[sort]} {order}"
-    query = f"""
+
+    # Базовый запрос
+    query = """
         SELECT b.*, m.full_name as master_name, m.id as master_id, w.name as workspace_name,
                w.price_per_hour, w.price_per_day, w.price_per_multi_day,
                CASE
@@ -459,28 +587,53 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
         JOIN masters m ON b.master_id = m.id
         JOIN workspaces w ON b.workspace_id = w.id
         WHERE 1=1
-        ORDER BY {order_by}
     """
+    params = []
+
+    # Применяем фильтры
+    if filter_text:
+        query += " AND (m.full_name ILIKE $1 OR w.name ILIKE $1 OR CAST(b.id AS TEXT) ILIKE $1)"
+        params.append(f"%{filter_text}%")
+    if status_filter:
+        query += f" AND b.status = ${len(params)+1}"
+        params.append(status_filter)
+    if workspace_id_filter:
+        query += f" AND b.workspace_id = ${len(params)+1}"
+        params.append(int(workspace_id_filter))
+
+    query += f" ORDER BY {order_by}"
+
     async with app.state.pool.acquire() as conn:
-        rows = await conn.fetch(query)
+        rows = await conn.fetch(query, *params)
+
+    # Формируем HTML-строки таблицы
     table_rows = ""
     for row in rows:
         created_fmt = row['created_at'].strftime('%d.%m.%Y %H:%M') if row['created_at'] else ''
         start_fmt = row['start_time'].strftime('%d.%m.%y %H:%M') if row['start_time'] else ''
         end_fmt = row['end_time'].strftime('%d.%m.%y %H:%M') if row['end_time'] else ''
-        status_ru = {'pending':'Ожидает оплаты','paid':'Оплачено','completed':'Завершена','cancelled':'Отменена'}.get(row['status'], row['status'])
-        # Вычисляем цену за единицу в зависимости от типа
+        status_ru = {
+            'pending': 'Ожидает оплаты',
+            'paid': 'Оплачено',
+            'completed': 'Завершена',
+            'cancelled': 'Отменена'
+        }.get(row['status'], row['status'])
+
+        # Цена за единицу в зависимости от типа
         if row['type'] == 'Почасовая':
             price_unit = row['price_per_hour'] or 0
         elif row['type'] == 'На день':
             price_unit = row['price_per_day'] or 0
         else:
             price_unit = row['price_per_multi_day'] or 0
+
+        # Если total_price не задана, вычисляем
+        total_price = row['total_price'] if row['total_price'] else (price_unit * (row['hours'] or 0) if row['type'] == 'Почасовая' else price_unit * (row['days'] or 1))
         hours_val = int(row['hours']) if row['hours'] else 0
         days_val = int(row['days']) if row['days'] else 1
-        # Если total_price не задана или равна 0, вычисляем её
-        total_price = row['total_price'] if row['total_price'] else (price_unit * hours_val if row['type'] == 'Почасовая' else price_unit * days_val)
+
         master_link = f"<a href='#' onclick='showMasterInfo({row['master_id']}); return false;'>{row['master_name']}</a>"
+
         actions = ""
         if row['status'] == 'pending':
             actions += f"<a href='/admin/bookings/confirm/{row['id']}' class='btn btn-sm btn-success'>Подтвердить оплату</a> "
@@ -488,6 +641,7 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
             actions += f"<a href='/admin/bookings/cancel/{row['id']}' class='btn btn-sm btn-danger'>Отменить</a> "
         if row['status'] != 'completed':
             actions += f"<a href='/admin/bookings/complete/{row['id']}' class='btn btn-sm btn-secondary'>Завершить</a> "
+
         table_rows += f"""
             <tr class='booking-row' data-id='{row['id']}' ondblclick='editBooking({row['id']})'>
                 <td>{created_fmt}</td>
@@ -505,37 +659,106 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
                 <td>{actions}</td>
             </tr>
         """
+
+    # Получаем списки мастеров и мест для выпадающих списков фильтрации и для модалок
     async with app.state.pool.acquire() as conn:
         masters = await conn.fetch("SELECT id, full_name FROM masters ORDER BY full_name")
         workspaces = await conn.fetch("SELECT id, name FROM workspaces ORDER BY name")
+
     master_options = "".join(f"<option value='{m['id']}'>{m['full_name']}</option>" for m in masters)
     workspace_options = "".join(f"<option value='{w['id']}'>{w['name']}</option>" for w in workspaces)
-    # Формируем ссылки для сортировки
-    def sort_link(field):
-        new_order = 'desc' if sort == field and order == 'asc' else 'asc'
-        return f"/admin/bookings?sort={field}&order={new_order}"
+
+    # Генерируем HTML-код фильтров (выпадающие списки)
+    filter_html = f"""
+    <div class="filter-bar" style="margin-bottom:20px; display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+        <div><label>Фильтр (мастер, место, ID)</label><input type="text" id="filterInput" value="{filter_text}" class="form-control" placeholder="Поиск..."></div>
+        <div><label>Статус</label>
+            <select id="statusFilter" class="form-control">
+                <option value="">Все</option>
+                <option value="pending" {'selected' if status_filter=='pending' else ''}>Ожидает оплаты</option>
+                <option value="paid" {'selected' if status_filter=='paid' else ''}>Оплачено</option>
+                <option value="completed" {'selected' if status_filter=='completed' else ''}>Завершена</option>
+                <option value="cancelled" {'selected' if status_filter=='cancelled' else ''}>Отменена</option>
+            </select>
+        </div>
+        <div><label>Место</label>
+            <select id="workspaceFilter" class="form-control">
+                <option value="">Все</option>
+                {''.join(f'<option value="{w["id"]}" {"selected" if workspace_id_filter==str(w["id"]) else ""}>{w["name"]}</option>' for w in workspaces)}
+            </select>
+        </div>
+        <div><label>Сортировать по</label>
+            <select id="sortField" class="form-control">
+                <option value="created_at" {'selected' if sort=='created_at' else ''}>Дата создания</option>
+                <option value="start_time" {'selected' if sort=='start_time' else ''}>Начало</option>
+                <option value="end_time" {'selected' if sort=='end_time' else ''}>Конец</option>
+                <option value="workspace_name" {'selected' if sort=='workspace_name' else ''}>Место</option>
+                <option value="type" {'selected' if sort=='type' else ''}>Тип брони</option>
+                <option value="hours" {'selected' if sort=='hours' else ''}>Часы</option>
+                <option value="days" {'selected' if sort=='days' else ''}>Дни</option>
+                <option value="master_name" {'selected' if sort=='master_name' else ''}>Мастер</option>
+                <option value="price" {'selected' if sort=='price' else ''}>Цена/ед</option>
+                <option value="total_price" {'selected' if sort=='total_price' else ''}>Стоимость</option>
+                <option value="id" {'selected' if sort=='id' else ''}>ID</option>
+                <option value="status" {'selected' if sort=='status' else ''}>Статус</option>
+            </select>
+        </div>
+        <div><label>Порядок</label>
+            <select id="sortOrder" class="form-control">
+                <option value="asc" {'selected' if order=='asc' else ''}>По возрастанию</option>
+                <option value="desc" {'selected' if order=='desc' else ''}>По убыванию</option>
+            </select>
+        </div>
+        <div><button class="btn btn-primary" onclick="submitFilter()">Применить</button></div>
+        <div><a href="/admin/bookings" class="btn btn-secondary">Сбросить</a></div>
+        <div><button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addBookingModal">➕ Добавить бронь вручную</button></div>
+    </div>
+    <script>
+        function submitFilter() {{
+            const filter = document.getElementById('filterInput').value;
+            const status = document.getElementById('statusFilter').value;
+            const workspace = document.getElementById('workspaceFilter').value;
+            const sort = document.getElementById('sortField').value;
+            const order = document.getElementById('sortOrder').value;
+            window.location.href = `/admin/bookings?filter=${{encodeURIComponent(filter)}}&status=${{status}}&workspace_id=${{workspace}}&sort=${{sort}}&order=${{order}}`;
+        }}
+        function changeSort(field) {{
+            let currentSort = document.getElementById('sortField').value;
+            let currentOrder = document.getElementById('sortOrder').value;
+            if (currentSort === field) {{
+                document.getElementById('sortOrder').value = (currentOrder === 'asc' ? 'desc' : 'asc');
+            }} else {{
+                document.getElementById('sortField').value = field;
+                document.getElementById('sortOrder').value = 'asc';
+            }}
+            submitFilter();
+        }}
+    </script>
+    """
+
     table_header = f"""
     <table class="table table-bordered">
         <thead>
             <tr>
-                <th><a href="{sort_link('created_at')}">Время создания брони</a></th>
-                <th><a href="{sort_link('start_time')}">Начало</a></th>
-                <th><a href="{sort_link('end_time')}">Конец</a></th>
-                <th><a href="{sort_link('workspace_name')}">Место</a></th>
-                <th><a href="{sort_link('type')}">Тип брони</a></th>
-                <th><a href="{sort_link('hours')}">Количество часов</a></th>
-                <th><a href="{sort_link('days')}">Количество дней</a></th>
-                <th><a href="{sort_link('master_name')}">Мастер</a></th>
-                <th><a href="{sort_link('price')}">Цена</a></th>
-                <th><a href="{sort_link('total_price')}">Стоимость</a></th>
-                <th><a href="{sort_link('id')}">ID</a></th>
-                <th><a href="{sort_link('status')}">Статус</a></th>
+                <th onclick="changeSort('created_at')" style="cursor:pointer;">Время создания брони</th>
+                <th onclick="changeSort('start_time')" style="cursor:pointer;">Начало</th>
+                <th onclick="changeSort('end_time')" style="cursor:pointer;">Конец</th>
+                <th onclick="changeSort('workspace_name')" style="cursor:pointer;">Место</th>
+                <th onclick="changeSort('type')" style="cursor:pointer;">Тип брони</th>
+                <th onclick="changeSort('hours')" style="cursor:pointer;">Количество часов</th>
+                <th onclick="changeSort('days')" style="cursor:pointer;">Количество дней</th>
+                <th onclick="changeSort('master_name')" style="cursor:pointer;">Мастер</th>
+                <th onclick="changeSort('price')" style="cursor:pointer;">Цена</th>
+                <th onclick="changeSort('total_price')" style="cursor:pointer;">Стоимость</th>
+                <th onclick="changeSort('id')" style="cursor:pointer;">ID</th>
+                <th onclick="changeSort('status')" style="cursor:pointer;">Статус</th>
                 <th>Действия</th>
             </tr>
         </thead>
         <tbody>
     """
-    content = f"<h2>Бронирования</h2><div style='margin-bottom:20px;'><button class='btn btn-success' data-bs-toggle='modal' data-bs-target='#addBookingModal'>➕ Добавить бронь вручную</button></div>{table_header}{table_rows}</tbody></table>"
+    table_footer = "</tbody>\\<tr>"
+    content = f"<h2>Бронирования</h2>{filter_html}{table_header}{table_rows}{table_footer}"
     return render("Брони", content, master_options, workspace_options)
 
 @app.post("/admin/bookings/add")
@@ -799,3 +1022,20 @@ async def api_get_logs(service: str, lines: int = 100, auth=Depends(authenticate
         return JSONResponse({"logs": logs})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+    
+@app.get("/admin/export/{table}")
+async def export_csv(table: str, auth=Depends(authenticate)):
+    allowed = ['workspaces', 'bookings', 'masters']
+    if table not in allowed:
+        raise HTTPException(400)
+    async with app.state.pool.acquire() as conn:
+        rows = await conn.fetch(f"SELECT * FROM {table}")
+    if not rows:
+        return JSONResponse({"error": "No data"}, status_code=404)
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(rows[0].keys())
+    for row in rows:
+        writer.writerow(row.values())
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={table}.csv"})

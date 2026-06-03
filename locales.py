@@ -68,7 +68,14 @@ TEXTS = {
         'days_taken': "Некоторые дни уже заняты: {}. Выберите другой диапазон.",
 
         # Подтверждение брони
-        'booking_summary': "✅ Подтверждение бронирования:\nМесто: {workspace}\nТип: {type}\n{description}\nСумма: {total} руб (или {total} звёзд, если выбран Telegram Stars)\n\nВыберите способ оплаты и завершите бронирование в течение 2 минут, иначе слот станет свободным.",
+        'booking_summary': (
+        "✅ Подтверждение бронирования:\n"
+        "Место: {workspace}\n"
+        "Тип: {type}\n"
+        "{description}\n"
+        "Сумма: {total} руб{stars_line}\n\n"
+        "Выберите способ оплаты:"),
+        'booking_summary_stars': " (или {stars} звёзд, если выбран Telegram Stars)",
         'daily_description': "Весь день {date} (6:00-22:00)",
         'multiday_description': "с {start} по {end} (ежедневно 6:00-22:00)",
         'pay_stars': "⭐ Оплатить Stars",
@@ -132,7 +139,12 @@ TEXTS = {
         'end_date_before_start': "Дата окончания не может быть раньше даты начала. Попробуйте снова.",
         'edit_message_not_found': "Ошибка: не найдено сообщение для редактирования. Попробуйте начать бронирование заново.",
         'workspace_data_lost': "Данные о месте утеряны. Пожалуйста, начните бронирование заново.",
-
+        # НЕ ПЕРЕВЕДЕНО
+        'cancel_booking_btn': '❌ Отменить бронь',
+        'cancel_booking_prompt': 'Если вы передумали, можете отменить бронь, пока она не оплачена.',
+        'booking_cancelled': 'Бронь отменена.',
+        'booking_already_paid': 'Бронь уже оплачена, отмена невозможна.',
+        'day_already_started': 'Сегодняшний день уже начался, забронировать его нельзя. Выберите другой день.',
         
 
     },
@@ -203,7 +215,15 @@ TEXTS = {
         'days_taken': "Some days are already taken: {}. Choose another range.",
 
         # Booking confirmation
-        'booking_summary': "✅ Booking confirmation:\nWorkspace: {workspace}\nType: {type}\n{description}\nAmount: {total} RUB (or {total} stars if Telegram Stars selected)\n\nChoose payment method and complete booking within 2 minutes, otherwise the slot will become free.",
+        'booking_summary': (
+        "✅ Booking confirmation:\n"
+        "Workspace: {workspace}\n"
+        "Type: {type}\n"
+        "{description}\n"
+        "Amount: {total} RUB{stars_line}\n\n"
+        "Choose payment method:"
+        ),
+        'booking_summary_stars': " (or {stars} stars if Telegram Stars selected)",
         'daily_description': "Full day {date} (6:00-22:00)",
         'multiday_description': "from {start} to {end} (daily 6:00-22:00)",
         'pay_stars': "⭐ Pay with Stars",
