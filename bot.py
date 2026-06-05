@@ -107,6 +107,7 @@ async def on_startup():
     asyncio.create_task(cleanup_expired_pending())
     asyncio.create_task(auto_complete_bookings())
     asyncio.create_task(start_web_server())
+    asyncio.create_task(process_mailings())
     logging.info("Бот запущен, пул БД создан, фоновые задачи запущены")
 
 @dp.shutdown()
@@ -380,6 +381,7 @@ async def show_workspace_detail(chat_id: int, state: FSMContext, user_id: int):
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, name, description, price_per_hour, price_per_day, price_per_multi_day, "
+            "price_per_hour_stars, price_per_day_stars, price_per_multi_day_stars, "
             "image_url_1, image_url_2, image_url_3 FROM workspaces WHERE id = $1",
             workspace_id
         )
@@ -752,6 +754,27 @@ async def process_date(callback: CallbackQuery, state: FSMContext):
 async def show_available_slots(chat_id: int, state: FSMContext, user_id: int):
     lang = await get_user_language(user_id)
     data = await state.get_data()
+
+    # Проверяем наличие selected_workspace, если нет – восстанавливаем
+    if 'selected_workspace' not in data:
+        temp = data.get('temp_booking')
+        if temp and 'workspace_id' in temp:
+            pool = dp['db_pool']
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT * FROM workspaces WHERE id = $1", temp['workspace_id'])
+                if row:
+                    ws = dict(row)
+                    await state.update_data(selected_workspace=ws)
+                    data = await state.get_data()
+                else:
+                    await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
+                    await state.clear()
+                    return
+        else:
+            await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
+            await state.clear()
+            return
+
     workspace_id = data['selected_workspace']['id']
     selected_date = data['selected_date']
     pool = dp['db_pool']
@@ -865,9 +888,31 @@ async def back_to_slots(callback: CallbackQuery, state: FSMContext):
 async def check_daily_availability(chat_id: int, state: FSMContext, user_id: int):
     lang = await get_user_language(user_id)
     data = await state.get_data()
+
+    # Проверяем наличие selected_workspace, если нет – восстанавливаем
+    if 'selected_workspace' not in data:
+        temp = data.get('temp_booking')
+        if temp and 'workspace_id' in temp:
+            pool = dp['db_pool']
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT * FROM workspaces WHERE id = $1", temp['workspace_id'])
+                if row:
+                    ws = dict(row)
+                    await state.update_data(selected_workspace=ws)
+                    data = await state.get_data()
+                else:
+                    await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
+                    await state.clear()
+                    return
+        else:
+            await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
+            await state.clear()
+            return
+
     workspace_id = data['selected_workspace']['id']
     selected_date = data['selected_date']
 
+    # Валидация дня: сегодняшний день нельзя забронировать, если он уже начался
     if selected_date == datetime.now().date() and datetime.now().time() > time(WORK_START_HOUR, 0):
         text = get_text('day_already_started', lang)
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -976,7 +1021,7 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
         hours = (end_time - start_time).seconds // 3600
         total_price = ws['price_per_hour'] * hours
         description = f"{start_time.strftime('%d.%m.%Y %H:%M')} – {end_time.strftime('%H:%M')}"
-        stars_price = ws.get('price_per_hour_stars', 0)
+        stars_price = (ws.get('price_per_hour_stars') or 0) * hours
     elif rent_type == "daily":
         type_name = get_text('daily', lang)
         selected_date = data['selected_date']
@@ -984,7 +1029,7 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
         end_time = datetime.combine(selected_date, time(WORK_END_HOUR, 0))
         total_price = ws['price_per_day']
         description = get_text('daily_description', lang).format(date=selected_date.strftime('%d.%m.%Y'))
-        stars_price = ws.get('price_per_day_stars', 0)
+        stars_price = (ws.get('price_per_day_stars') or 0)
     else:  # multiday
         type_name = get_text('multiday', lang)
         start_date = data['start_date']
@@ -997,7 +1042,7 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
             start=start_date.strftime('%d.%m.%Y'),
             end=end_date.strftime('%d.%m.%Y')
         )
-        stars_price = ws.get('price_per_multi_day_stars', 0)
+        stars_price = (ws.get('price_per_multi_day_stars') or 0) * days
 
     # Сохраняем временные данные для оплаты
     await state.update_data(
@@ -1009,11 +1054,13 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
             "rent_type": rent_type,
             "workspace_name": ws['name'],
             "description": description,
-            "type_name": type_name
+            "type_name": type_name,
+            "stars_price": stars_price
         }
     )
 
-    if stars_price:
+    # Формируем текст подтверждения
+    if stars_price and stars_price > 0:
         stars_line = get_text('booking_summary_stars', lang).format(stars=stars_price)
     else:
         stars_line = ""
@@ -1050,6 +1097,7 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
             )
             await state.clear()
             return
+    logging.info(f"DEBUG: rent_type={rent_type}, stars_price={stars_price}, stars_line='{stars_line}'")
 
     # Если конфликта нет, показываем окно выбора оплаты
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -1066,6 +1114,7 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
         reply_markup=kb
     )
     await state.set_state(BookingStates.waiting_for_payment)
+
 
 # ---------- Оплата Telegram Stars ----------
 @dp.callback_query(BookingStates.waiting_for_payment, lambda c: c.data == "pay_stars")
@@ -1088,6 +1137,7 @@ async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
             )
         master_id = master['id']
 
+        # Проверка конфликта (на случай, если за время ожидания слот заняли)
         conflicting = await conn.fetchval("""
             SELECT 1 FROM bookings
             WHERE workspace_id = $1
@@ -1108,22 +1158,18 @@ async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
             VALUES ($1, $2, $3, $4, 'pending', 'stars', 'pending', now(), $5)
             RETURNING id
         """, master_id, temp['workspace_id'], temp['start_time'], temp['end_time'], temp['total_price'])
+
         booking_id = booking['id']
         await state.update_data(booking_id=booking_id)
 
-    # Получаем цену в звёздах в зависимости от типа аренды
-    ws = data['selected_workspace']
-    rent_type = temp['rent_type']  # 'hourly', 'daily', 'multiday'
-    if rent_type == 'hourly':
-        stars_amount = ws.get('price_per_hour_stars')
-    elif rent_type == 'daily':
-        stars_amount = ws.get('price_per_day_stars')
-    else:
-        stars_amount = ws.get('price_per_multi_day_stars')
-
-    # Если цена в звёздах не задана (0 или None), используем рублёвую цену как звёзды
+    # Цена в звёздах для инвойса
+    stars_amount = temp.get('stars_price', 0)
+    # Если по какой-то причине stars_price не задана или равна 0, используем рублёвую цену как звёзды (fallback)
     if not stars_amount:
         stars_amount = int(temp['total_price'])
+        # Если и total_price 0, то ставим 1 звезду (тестовое значение)
+        if stars_amount == 0:
+            stars_amount = 1
 
     payload = f"booking_{uuid.uuid4().hex}"
     await state.update_data(payment_payload=payload, user_id=callback.from_user.id)
@@ -1423,6 +1469,36 @@ async def expire_booking_task(booking_id: int, chat_id: int, payment_msg_id: int
                 [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="to_main_menu_from_expire")]
             ])
             await bot.send_message(chat_id, get_text('booking_pending_timeout', lang), reply_markup=kb)
+
+async def process_mailings():
+    while True:
+        await asyncio.sleep(60)  # проверяем каждую минуту
+        pool = dp['db_pool']
+        if not pool:
+            continue
+        now = datetime.now()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM mailings
+                WHERE status = 'pending' AND (scheduled_at IS NULL OR scheduled_at <= $1)
+            """, now)
+            for row in rows:
+                # Получаем всех мастеров
+                masters = await conn.fetch("SELECT telegram_id FROM masters WHERE is_blocked = false")
+                for master in masters:
+                    kb = None
+                    if row['buttons']:
+                        import json
+                        btns = json.loads(row['buttons'])
+                        inline_btns = []
+                        for btn in btns:
+                            inline_btns.append([InlineKeyboardButton(text=btn['label'], callback_data=btn['callback_data'])])
+                        kb = InlineKeyboardMarkup(inline_keyboard=inline_btns)
+                    try:
+                        await bot.send_message(chat_id=master['telegram_id'], text=row['text'], reply_markup=kb, parse_mode="HTML")
+                    except Exception as e:
+                        logging.error(f"Ошибка отправки мастеру {master['telegram_id']}: {e}")
+                await conn.execute("UPDATE mailings SET status = 'sent' WHERE id = $1", row['id'])
 
 @dp.callback_query(lambda c: c.data == "to_main_menu_from_expire")
 async def to_main_menu_from_expire(callback: CallbackQuery, state: FSMContext):

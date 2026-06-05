@@ -12,6 +12,7 @@ import subprocess
 import csv
 from io import StringIO
 from fastapi.responses import StreamingResponse
+import re
 
 load_dotenv()
 
@@ -34,13 +35,19 @@ def verify_password(password: str, stored_hash: str) -> bool:
         return new_key == key
     except Exception:
         return False
+    
+def validate_phone(phone: str) -> bool:
+    if not phone:
+        return True  # пустое поле допустимо
+    # Российский номер в свободном формате: +7(912)345-67-89, 89123456789 и т.п.
+    pattern = r'^(\+7|8)?[\s\-]?\(?[0-9]{3}\)?[\s\-]?[0-9]{3}[\s\-]?[0-9]{2}[\s\-]?[0-9]{2}$'
+    return bool(re.match(pattern, phone))
 
 def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
     correct_username = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
     correct_password = verify_password(credentials.password, ADMIN_PASSWORD_HASH)
     if not (correct_username and correct_password):
         raise HTTPException(status_code=401, detail="Неверные учётные данные", headers={"WWW-Authenticate": "Basic"})
-    return credentials
     return credentials
 
 @app.on_event("startup")
@@ -72,17 +79,17 @@ BASE_HTML = """
     <link id="theme-css" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body {{ overflow-x: auto; }}
-        .custom-container {{
+        body { overflow-x: auto; }
+        .custom-container {
             width: 95%;
             margin-left: auto;
             margin-right: auto;
             padding-left: 15px;
             padding-right: 15px;
-        }}
-        .clickable {{ cursor: pointer; }}
-        .clickable:hover {{ text-decoration: underline; }}
-        .theme-switch {{
+        }
+        .clickable { cursor: pointer; }
+        .clickable:hover { text-decoration: underline; }
+        .theme-switch {
             position: fixed;
             bottom: 20px;
             right: 20px;
@@ -94,18 +101,34 @@ BASE_HTML = """
             cursor: pointer;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             font-size: 14px;
-        }}
-        .dark-theme .theme-switch {{
+        }
+        .dark-theme .theme-switch {
             background: #2c3034;
             border-color: #555;
             color: #f8f9fa;
-        }}
-        .btn-sm {{ padding: 0.25rem 0.5rem; font-size: 0.75rem; }}
-        table th.sortable {{ cursor: pointer; user-select: none; }}
-        table th.sortable:hover {{ background-color: rgba(0,0,0,0.05); }}
-        .booking-row {{ cursor: pointer; }}
-        .booking-row:hover {{ background-color: rgba(0, 0, 0, 0.05); }}
-        .dark-theme .booking-row:hover {{ background-color: rgba(255, 255, 255, 0.1); }}
+        }
+        .filter-bar {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+        .filter-bar input, .filter-bar select { width: 200px; }
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+        }
+        table th.sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+        table th.sortable:hover {
+            background-color: rgba(0,0,0,0.05);
+        }
+        .booking-row { cursor: pointer; }
+        .booking-row:hover { background-color: rgba(0, 0, 0, 0.05); }
+        .dark-theme .booking-row:hover { background-color: rgba(255, 255, 255, 0.1); }
         .dark-theme #logContent {
             background-color: #1e1e1e !important;
             color: #f8f9fa !important;
@@ -117,29 +140,28 @@ BASE_HTML = """
         }
     </style>
     <script>
-        function setTheme(theme) {{
-            if (theme === 'dark') {{
+        function setTheme(theme) {
+            if (theme === 'dark') {
                 document.getElementById('theme-css').href = 'https://cdn.jsdelivr.net/npm/bootswatch@5.3.0/dist/darkly/bootstrap.min.css';
                 document.body.classList.add('dark-theme');
                 localStorage.setItem('theme', 'dark');
-            }} else {{
+            } else {
                 document.getElementById('theme-css').href = 'https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css';
                 document.body.classList.remove('dark-theme');
                 localStorage.setItem('theme', 'light');
-            }}
-        }}
-        function toggleTheme() {{
+            }
+        }
+        function toggleTheme() {
             const current = localStorage.getItem('theme') || 'light';
             setTheme(current === 'light' ? 'dark' : 'light');
-        }}
-        window.onload = function() {{
+        }
+        window.onload = function() {
             const saved = localStorage.getItem('theme');
             if (saved === 'dark') setTheme('dark');
-        }};
+        };
 
-        // Мастера
-        async function showMasterInfo(masterId) {{
-            const resp = await fetch(`/admin/master_info/${{masterId}}`);
+        async function showMasterInfo(masterId) {
+            const resp = await fetch(`/admin/master_info/${masterId}`);
             const data = await resp.json();
             document.getElementById('modalMasterId').value = masterId;
             document.getElementById('modalMasterName').innerText = data.full_name || '—';
@@ -149,26 +171,26 @@ BASE_HTML = """
             document.getElementById('modalMasterStatus').innerHTML = data.is_blocked ? '<span class="text-danger">Заблокирован</span>' : '<span class="text-success">Активен</span>';
             const blockBtn = document.getElementById('modalBlockBtn');
             const unblockBtn = document.getElementById('modalUnblockBtn');
-            if (data.is_blocked) {{
+            if (data.is_blocked) {
                 blockBtn.style.display = 'none';
                 unblockBtn.style.display = 'inline-block';
-            }} else {{
+            } else {
                 blockBtn.style.display = 'inline-block';
                 unblockBtn.style.display = 'none';
-            }}
+            }
             const modal = new bootstrap.Modal(document.getElementById('masterInfoModal'));
             modal.show();
-        }}
-        async function blockMaster(masterId) {{
-            await fetch(`/admin/masters/block/${{masterId}}`, {{ method: 'GET' }});
+        }
+        async function blockMaster(masterId) {
+            await fetch(`/admin/masters/block/${masterId}`, { method: 'GET' });
             location.reload();
-        }}
-        async function unblockMaster(masterId) {{
-            await fetch(`/admin/masters/unblock/${{masterId}}`, {{ method: 'GET' }});
+        }
+        async function unblockMaster(masterId) {
+            await fetch(`/admin/masters/unblock/${masterId}`, { method: 'GET' });
             location.reload();
-        }}
-        async function editMaster(masterId) {{
-            const resp = await fetch(`/admin/master_info/${{masterId}}`);
+        }
+        async function editMaster(masterId) {
+            const resp = await fetch(`/admin/master_info/${masterId}`);
             const data = await resp.json();
             document.getElementById('editMasterId').value = masterId;
             document.getElementById('editMasterName').value = data.full_name || '';
@@ -176,23 +198,27 @@ BASE_HTML = """
             document.getElementById('editMasterNotes').value = data.notes || '';
             const modal = new bootstrap.Modal(document.getElementById('editMasterModal'));
             modal.show();
-        }}
-        async function saveMasterEdit() {{
+        }
+        async function saveMasterEdit() {
             const masterId = document.getElementById('editMasterId').value;
             const full_name = document.getElementById('editMasterName').value;
             const phone = document.getElementById('editMasterPhone').value;
             const notes = document.getElementById('editMasterNotes').value;
-            const resp = await fetch(`/admin/masters/edit_ajax/${{masterId}}`, {{
+            // Валидация телефона
+            if (phone && !/^(\+7|8)?[\s\-]?\(?[0-9]{3}\)?[\s\-]?[0-9]{3}[\s\-]?[0-9]{2}[\s\-]?[0-9]{2}$/.test(phone)) {
+                alert("Введите корректный российский номер телефона");
+                return;
+            }
+            const resp = await fetch(`/admin/masters/edit_ajax/${masterId}`, {
                 method: 'POST',
-                headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
-                body: new URLSearchParams({{ full_name, phone, notes }})
-            }});
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ full_name, phone, notes })
+            });
             if (resp.ok) location.reload();
             else alert('Ошибка при сохранении');
-        }}
-        // Редактирование брони
-        async function editBooking(bookingId) {{
-            const resp = await fetch(`/admin/bookings/get/${{bookingId}}`);
+        }
+        async function editBooking(bookingId) {
+            const resp = await fetch(`/admin/bookings/get/${bookingId}`);
             const data = await resp.json();
             document.getElementById('editBookingId').value = bookingId;
             document.querySelector('#editBookingModal select[name="master_id"]').value = data.master_id;
@@ -203,26 +229,26 @@ BASE_HTML = """
             document.querySelector('#editBookingModal select[name="status"]').value = data.status;
             const modal = new bootstrap.Modal(document.getElementById('editBookingModal'));
             modal.show();
-        }}
-        document.addEventListener('DOMContentLoaded', function() {{
+        }
+        document.addEventListener('DOMContentLoaded', function() {
             const form = document.getElementById('editBookingForm');
-            if (form) {{
-                form.onsubmit = async function(e) {{
+            if (form) {
+                form.onsubmit = async function(e) {
                     e.preventDefault();
                     const bookingId = document.getElementById('editBookingId').value;
                     const formData = new FormData(form);
-                    const resp = await fetch(`/admin/bookings/edit/${{bookingId}}`, {{
+                    const resp = await fetch(`/admin/bookings/edit/${bookingId}`, {
                         method: 'POST',
                         body: formData
-                    }});
-                    if (resp.ok) {{
+                    });
+                    if (resp.ok) {
                         location.reload();
-                    }} else {{
+                    } else {
                         alert('Ошибка при редактировании');
-                    }}
-                }};
-            }}
-        }});
+                    }
+                };
+            }
+        });
     </script>
 </head>
 <body>
@@ -234,12 +260,10 @@ BASE_HTML = """
                 <a class="nav-link" href="/admin/workspaces">Места</a>
                 <a class="nav-link" href="/admin/bookings">Брони</a>
                 <a class="nav-link" href="/admin/masters">Мастера</a>
-                <a class="nav-link" href="/admin/statistics">Статистика</a>
                 <a class="nav-link" href="/admin/finance">Финансы</a>
                 <a class="nav-link" href="/admin/logs">Логи</a>
-                <a href="/admin/export/workspaces" class="btn btn-sm btn-secondary">Экспорт CSV</a>
+                <a class="nav-link" href="/admin/mailings">Рассылки</a>
                 <a class="nav-link" href="/logout">Выйти</a>
-                
             </div>
         </div>
     </nav>
@@ -281,7 +305,7 @@ BASE_HTML = """
         <div class="modal-dialog"><div class="modal-content">
             <div class="modal-header"><h5 class="modal-title">Добавить мастера</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
             <div class="modal-body">
-                <form action="/admin/masters/add" method="post">
+                <form action="/admin/masters/add" method="post" onsubmit="return validatePhoneForm()">
                     <div class="mb-3"><label>Имя</label><input type="text" name="full_name" class="form-control" required></div>
                     <div class="mb-3"><label>Телефон</label><input type="text" name="phone" class="form-control"></div>
                     <div class="mb-3"><label>Заметки</label><textarea name="notes" class="form-control" rows="3"></textarea></div>
@@ -346,12 +370,102 @@ BASE_HTML = """
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function formatPhoneNumber(input) {
+            let digits = input.replace(/\D/g, '');
+            if (digits.length === 0) return '';
+            if (digits.startsWith('8')) {
+                digits = '7' + digits.slice(1);
+            }
+            if (digits.length > 0 && !digits.startsWith('7')) {
+                digits = '7' + digits;
+            }
+            if (digits.length > 11) digits = digits.slice(0, 11);
+            if (digits.length === 11) {
+                return `+7 (${digits.slice(1,4)}) ${digits.slice(4,7)}-${digits.slice(7,9)}-${digits.slice(9,11)}`;
+            } else if (digits.length > 1) {
+                let partial = '+7';
+                if (digits.length > 1) partial += ` (${digits.slice(1, Math.min(4, digits.length))}`;
+                if (digits.length > 4) partial += `) ${digits.slice(4, Math.min(7, digits.length))}`;
+                if (digits.length > 7) partial += `-${digits.slice(7, Math.min(9, digits.length))}`;
+                if (digits.length > 9) partial += `-${digits.slice(9, 11)}`;
+                return partial;
+            }
+            return input;
+        }
+
+        function initPhoneFormatting() {
+            const phoneInputAdd = document.querySelector('#addMasterModal input[name="phone"]');
+            const phoneInputEdit = document.getElementById('editMasterPhone');
+
+            function attachEvents(field) {
+                if (!field) return;
+                // Убираем старые обработчики, чтобы не навешивать повторно
+                field.removeEventListener('input', field._inputHandler);
+                field.removeEventListener('blur', field._blurHandler);
+                field._inputHandler = function(e) {
+                    let start = this.selectionStart;
+                    let raw = this.value;
+                    let formatted = formatPhoneNumber(raw);
+                    if (formatted !== raw) {
+                        this.value = formatted;
+                        let newPos = start + (formatted.length - raw.length);
+                        this.setSelectionRange(newPos, newPos);
+                    }
+                };
+                field._blurHandler = function() {
+                    if (this.value.trim() !== '') {
+                        this.value = formatPhoneNumber(this.value);
+                    }
+                };
+                field.addEventListener('input', field._inputHandler);
+                field.addEventListener('blur', field._blurHandler);
+            }
+
+            attachEvents(phoneInputAdd);
+            attachEvents(phoneInputEdit);
+        }
+
+        function validatePhoneForm() {
+            let phoneInput = document.querySelector('#addMasterModal input[name="phone"]');
+            if (!phoneInput) phoneInput = document.querySelector('#editMasterModal input[name="phone"]');
+            if (!phoneInput) return true;
+            let phone = phoneInput.value.trim();
+            if (phone === "") return true;
+            let pattern = /^(\+7|8)?[\s\-]?\(?[0-9]{3}\)?[\s\-]?[0-9]{3}[\s\-]?[0-9]{2}[\s\-]?[0-9]{2}$/;
+            if (!pattern.test(phone)) {
+                alert("Введите корректный российский номер телефона (например, +79123456789 или 89123456789)");
+                return false;
+            }
+            return true;
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            initPhoneFormatting();
+            const addModal = document.getElementById('addMasterModal');
+            if (addModal) {
+                addModal.addEventListener('shown.bs.modal', function() {
+                    initPhoneFormatting();
+                });
+            }
+            const editModal = document.getElementById('editMasterModal');
+            if (editModal) {
+                editModal.addEventListener('shown.bs.modal', function() {
+                    initPhoneFormatting();
+                    const phoneField = document.getElementById('editMasterPhone');
+                    if (phoneField && phoneField.value) {
+                        phoneField.value = formatPhoneNumber(phoneField.value);
+                    }
+                });
+            }
+        });
+    </script>
 </body>
 </html>
 """
 
 def render(title: str, content: str, masters_options_html: str = "", workspaces_options_html: str = "") -> HTMLResponse:
-    full_html = BASE_HTML.format(title=title, content=content)
+    full_html = BASE_HTML.replace("{title}", title).replace("{content}", content)
     full_html = full_html.replace("___MASTER_OPTIONS___", masters_options_html)
     full_html = full_html.replace("___WORKSPACE_OPTIONS___", workspaces_options_html)
     return HTMLResponse(full_html)
@@ -360,6 +474,7 @@ def render(title: str, content: str, masters_options_html: str = "", workspaces_
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_index(auth=Depends(authenticate)):
     async with app.state.pool.acquire() as conn:
+        # Данные для графиков
         counts = await conn.fetch("SELECT status, COUNT(*) FROM bookings GROUP BY status")
         status_counts = {r['status']: r['count'] for r in counts}
         top = await conn.fetch("""
@@ -372,6 +487,15 @@ async def admin_index(auth=Depends(authenticate)):
             day = datetime.now().date() - timedelta(days=i)
             cnt = await conn.fetchval("SELECT COUNT(*) FROM bookings WHERE DATE(start_time) = $1", day)
             last_14_days.append({"date": day.strftime("%d.%m"), "count": cnt})
+
+        # Текстовая статистика
+        pending = await conn.fetchval("SELECT COUNT(*) FROM bookings WHERE status='pending'")
+        paid = await conn.fetchval("SELECT COUNT(*) FROM bookings WHERE status='paid'")
+        completed = await conn.fetchval("SELECT COUNT(*) FROM bookings WHERE status='completed'")
+        cancelled = await conn.fetchval("SELECT COUNT(*) FROM bookings WHERE status='cancelled'")
+
+    top_html = "<ul>" + "".join(f"<li>{row['name']} – {row['count']} брони</li>" for row in top) + "</ul>"
+
     content = f"""
     <div class="row"><div class="col-md-12"><h2>Статистика</h2></div></div>
     <div class="row">
@@ -379,6 +503,27 @@ async def admin_index(auth=Depends(authenticate)):
         <div class="col-md-7"><canvas id="topWorkspacesChart" width="500" height="400"></canvas></div>
     </div>
     <div class="row mt-5"><div class="col-md-12"><h4>Брони по дням (последние 14 дней)</h4><canvas id="dailyChart" width="800" height="300"></canvas></div></div>
+    <div class="row mt-5">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">Брони по статусам</div>
+                <div class="card-body">
+                    <ul>
+                        <li>Ожидают оплаты: {pending}</li>
+                        <li>Оплачены: {paid}</li>
+                        <li>Завершены: {completed}</li>
+                        <li>Отменены: {cancelled}</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">Загрузка мест (топ-5)</div>
+                <div class="card-body">{top_html}</div>
+            </div>
+        </div>
+    </div>
     <script>
         new Chart(document.getElementById('statusChart'), {{type:'pie', data:{{labels:{[s for s in status_counts.keys()]}, datasets:[{{data:{[status_counts[s] for s in status_counts.keys()]}, backgroundColor:['#ffc107','#28a745','#17a2b8','#dc3545']}}]}}, options:{{responsive:true, plugins:{{legend:{{position:'bottom'}}}}}}}});
         new Chart(document.getElementById('topWorkspacesChart'), {{type:'bar', data:{{labels:{[row['name'] for row in top]}, datasets:[{{label:'Количество броней', data:{[row['count'] for row in top]}, backgroundColor:'#007bff'}}]}}, options:{{responsive:true, scales:{{y:{{beginAtZero:true}}}}}}}});
@@ -388,21 +533,103 @@ async def admin_index(auth=Depends(authenticate)):
     return render("Главная", content)
 
 # ------------------- Рабочие места (CRUD) -------------------
+# ------------------- Рабочие места (CRUD) -------------------
 @app.get("/admin/workspaces", response_class=HTMLResponse)
 async def list_workspaces(request: Request, auth=Depends(authenticate)):
     sort = request.query_params.get('sort', 'id')
     order = request.query_params.get('order', 'asc')
-    if order not in ('asc','desc'): order='asc'
-    allowed=['id','name','category','price_per_hour']
-    if sort not in allowed: sort='id'
+    name_filter = request.query_params.get('name', '').strip()
+    category_filter = request.query_params.get('category', '')
+
+    if order not in ('asc', 'desc'):
+        order = 'asc'
+    allowed_sort = ['id', 'name', 'category', 'price_per_hour', 'price_per_hour_stars',
+                    'price_per_day', 'price_per_day_stars', 'price_per_multi_day', 'price_per_multi_day_stars']
+    if sort not in allowed_sort:
+        sort = 'id'
+
+    query = "SELECT * FROM workspaces WHERE 1=1"
+    params = []
+    if name_filter:
+        query += " AND name ILIKE $" + str(len(params)+1)
+        params.append(f"%{name_filter}%")
+    if category_filter:
+        query += " AND category = $" + str(len(params)+1)
+        params.append(category_filter)
+    query += f" ORDER BY {sort} {order}"
+
     async with app.state.pool.acquire() as conn:
-        rows = await conn.fetch(f"SELECT * FROM workspaces ORDER BY {sort} {order}")
+        rows = await conn.fetch(query, *params)
+
     table_rows = ""
     for row in rows:
-        table_rows += f"<tr><td>{row['id']}</td><td>{row['name']}</td><td>{row['category']}</td><td>{row['price_per_hour']}</td><td>{row['price_per_day']}</td><td>{row['price_per_multi_day']}</td><td><a href='/admin/workspaces/edit/{row['id']}' class='btn btn-sm btn-warning'>Редакт</a> <a href='/admin/workspaces/delete/{row['id']}' class='btn btn-sm btn-danger' onclick=\"return confirm('Удалить?')\">Удалить</a></td></tr>"
-    asc_desc = "asc" if order=="desc" else "desc"
-    content = f"<h2>Рабочие места</h2><a href='/admin/workspaces/add' class='btn btn-primary mb-3'>Добавить место</a><table class='table table-bordered'><thead><tr><th><a href='/admin/workspaces?sort=id&order={asc_desc}'>ID</a></th><th><a href='/admin/workspaces?sort=name&order={asc_desc}'>Название</a></th><th><a href='/admin/workspaces?sort=category&order={asc_desc}'>Категория</a></th><th><a href='/admin/workspaces?sort=price_per_hour&order={asc_desc}'>Почасово</a></th><th>На день</th><th>Многодневная</th><th>Действия</th></tr></thead><tbody>{table_rows}</tbody></table>"
+        table_rows += f"""
+        <tr>
+            <td>{row['id']}</td>
+            <td>{row['name']}</td>
+            <td>{row['category']}</td>
+            <td>{row['price_per_hour']}</td>
+            <td>{row['price_per_hour_stars'] or 0}</td>
+            <td>{row['price_per_day']}</td>
+            <td>{row['price_per_day_stars'] or 0}</td>
+            <td>{row['price_per_multi_day']}</td>
+            <td>{row['price_per_multi_day_stars'] or 0}</td>
+            <td>
+                <a href='/admin/workspaces/edit/{row['id']}' class='btn btn-sm btn-warning'>Редакт</a>
+                <a href='/admin/workspaces/delete/{row['id']}' class='btn btn-sm btn-danger' onclick=\"return confirm('Удалить?')\">Удалить</a>
+            </td>
+        </tr>
+        """
+
+    def sort_link(field):
+        new_order = 'desc' if sort == field and order == 'asc' else 'asc'
+        return f"/admin/workspaces?sort={field}&order={new_order}&name={name_filter}&category={category_filter}"
+
+    filter_html = f"""
+    <div class="filter-bar" style="margin-bottom:20px; display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+        <div><label>Название</label><input type="text" id="nameFilter" value="{name_filter}" class="form-control" placeholder="Поиск по названию..."></div>
+        <div><label>Категория</label>
+            <select id="categoryFilter" class="form-control">
+                <option value="">Все</option>
+                <option value="couch_202" {'selected' if category_filter=='couch_202' else ''}>🛏 Кушетки 202</option>
+                <option value="dressing_202" {'selected' if category_filter=='dressing_202' else ''}>🎭 Гримерки 202</option>
+                <option value="dressing_201" {'selected' if category_filter=='dressing_201' else ''}>🎭 Гримерки 201</option>
+                <option value="hairdresser_201" {'selected' if category_filter=='hairdresser_201' else ''}>💺 Кресла 201</option>
+            </select>
+        </div>
+        <div><button class="btn btn-primary" onclick="submitFilter()">Применить</button></div>
+        <div><a href="/admin/workspaces" class="btn btn-secondary">Сбросить</a></div>
+    </div>
+    <script>
+        function submitFilter() {{
+            const name = document.getElementById('nameFilter').value;
+            const category = document.getElementById('categoryFilter').value;
+            window.location.href = `/admin/workspaces?name=${{encodeURIComponent(name)}}&category=${{category}}`;
+        }}
+    </script>
+    """
+
+    table_header = f"""
+    <table class="table table-bordered">
+        <thead>
+            <tr>
+                <th><a href="{sort_link('id')}">ID</a></th>
+                <th><a href="{sort_link('name')}">Название</a></th>
+                <th><a href="{sort_link('category')}">Категория</a></th>
+                <th><a href="{sort_link('price_per_hour')}">Почасово (руб)</a></th>
+                <th><a href="{sort_link('price_per_hour_stars')}">Почасово (звёзды)</a></th>
+                <th><a href="{sort_link('price_per_day')}">На день (руб)</a></th>
+                <th><a href="{sort_link('price_per_day_stars')}">На день (звёзды)</a></th>
+                <th><a href="{sort_link('price_per_multi_day')}">Многодневная (руб)</a></th>
+                <th><a href="{sort_link('price_per_multi_day_stars')}">Многодневная (звёзды)</a></th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+    """
+    content = f"<h2>Рабочие места</h2><a href='/admin/workspaces/add' class='btn btn-primary mb-3'>Добавить место</a>{filter_html}{table_header}{table_rows}</tbody>\\θ"
     return render("Места", content)
+
 
 @app.get("/admin/workspaces/add", response_class=HTMLResponse)
 async def add_workspace_form(auth=Depends(authenticate)):
@@ -543,7 +770,6 @@ async def delete_workspace(wid: int, auth=Depends(authenticate)):
 # ------------------- Бронирования -------------------
 @app.get("/admin/bookings", response_class=HTMLResponse)
 async def list_bookings(request: Request, auth=Depends(authenticate)):
-    # Получаем параметры фильтрации и сортировки
     filter_text = request.query_params.get('filter', '').strip()
     sort = request.query_params.get('sort', 'created_at')
     order = request.query_params.get('order', 'desc')
@@ -572,7 +798,6 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
     }
     order_by = f"{sql_sort_map[sort]} {order}"
 
-    # Базовый запрос
     query = """
         SELECT b.*, m.full_name as master_name, m.id as master_id, w.name as workspace_name,
                w.price_per_hour, w.price_per_day, w.price_per_multi_day,
@@ -589,8 +814,6 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
         WHERE 1=1
     """
     params = []
-
-    # Применяем фильтры
     if filter_text:
         query += " AND (m.full_name ILIKE $1 OR w.name ILIKE $1 OR CAST(b.id AS TEXT) ILIKE $1)"
         params.append(f"%{filter_text}%")
@@ -600,40 +823,27 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
     if workspace_id_filter:
         query += f" AND b.workspace_id = ${len(params)+1}"
         params.append(int(workspace_id_filter))
-
     query += f" ORDER BY {order_by}"
 
     async with app.state.pool.acquire() as conn:
         rows = await conn.fetch(query, *params)
 
-    # Формируем HTML-строки таблицы
     table_rows = ""
     for row in rows:
         created_fmt = row['created_at'].strftime('%d.%m.%Y %H:%M') if row['created_at'] else ''
         start_fmt = row['start_time'].strftime('%d.%m.%y %H:%M') if row['start_time'] else ''
         end_fmt = row['end_time'].strftime('%d.%m.%y %H:%M') if row['end_time'] else ''
-        status_ru = {
-            'pending': 'Ожидает оплаты',
-            'paid': 'Оплачено',
-            'completed': 'Завершена',
-            'cancelled': 'Отменена'
-        }.get(row['status'], row['status'])
-
-        # Цена за единицу в зависимости от типа
+        status_ru = {'pending':'Ожидает оплаты','paid':'Оплачено','completed':'Завершена','cancelled':'Отменена'}.get(row['status'], row['status'])
         if row['type'] == 'Почасовая':
             price_unit = row['price_per_hour'] or 0
         elif row['type'] == 'На день':
             price_unit = row['price_per_day'] or 0
         else:
             price_unit = row['price_per_multi_day'] or 0
-
-        # Если total_price не задана, вычисляем
         total_price = row['total_price'] if row['total_price'] else (price_unit * (row['hours'] or 0) if row['type'] == 'Почасовая' else price_unit * (row['days'] or 1))
         hours_val = int(row['hours']) if row['hours'] else 0
         days_val = int(row['days']) if row['days'] else 1
-
         master_link = f"<a href='#' onclick='showMasterInfo({row['master_id']}); return false;'>{row['master_name']}</a>"
-
         actions = ""
         if row['status'] == 'pending':
             actions += f"<a href='/admin/bookings/confirm/{row['id']}' class='btn btn-sm btn-success'>Подтвердить оплату</a> "
@@ -641,7 +851,6 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
             actions += f"<a href='/admin/bookings/cancel/{row['id']}' class='btn btn-sm btn-danger'>Отменить</a> "
         if row['status'] != 'completed':
             actions += f"<a href='/admin/bookings/complete/{row['id']}' class='btn btn-sm btn-secondary'>Завершить</a> "
-
         table_rows += f"""
             <tr class='booking-row' data-id='{row['id']}' ondblclick='editBooking({row['id']})'>
                 <td>{created_fmt}</td>
@@ -660,15 +869,16 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
             </tr>
         """
 
-    # Получаем списки мастеров и мест для выпадающих списков фильтрации и для модалок
     async with app.state.pool.acquire() as conn:
         masters = await conn.fetch("SELECT id, full_name FROM masters ORDER BY full_name")
         workspaces = await conn.fetch("SELECT id, name FROM workspaces ORDER BY name")
-
     master_options = "".join(f"<option value='{m['id']}'>{m['full_name']}</option>" for m in masters)
     workspace_options = "".join(f"<option value='{w['id']}'>{w['name']}</option>" for w in workspaces)
 
-    # Генерируем HTML-код фильтров (выпадающие списки)
+    def sort_link(field):
+        new_order = 'desc' if sort == field and order == 'asc' else 'asc'
+        return f"/admin/bookings?sort={field}&order={new_order}&filter={filter_text}&status={status_filter}&workspace_id={workspace_id_filter}"
+
     filter_html = f"""
     <div class="filter-bar" style="margin-bottom:20px; display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
         <div><label>Фильтр (мастер, место, ID)</label><input type="text" id="filterInput" value="{filter_text}" class="form-control" placeholder="Поиск..."></div>
@@ -687,28 +897,6 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
                 {''.join(f'<option value="{w["id"]}" {"selected" if workspace_id_filter==str(w["id"]) else ""}>{w["name"]}</option>' for w in workspaces)}
             </select>
         </div>
-        <div><label>Сортировать по</label>
-            <select id="sortField" class="form-control">
-                <option value="created_at" {'selected' if sort=='created_at' else ''}>Дата создания</option>
-                <option value="start_time" {'selected' if sort=='start_time' else ''}>Начало</option>
-                <option value="end_time" {'selected' if sort=='end_time' else ''}>Конец</option>
-                <option value="workspace_name" {'selected' if sort=='workspace_name' else ''}>Место</option>
-                <option value="type" {'selected' if sort=='type' else ''}>Тип брони</option>
-                <option value="hours" {'selected' if sort=='hours' else ''}>Часы</option>
-                <option value="days" {'selected' if sort=='days' else ''}>Дни</option>
-                <option value="master_name" {'selected' if sort=='master_name' else ''}>Мастер</option>
-                <option value="price" {'selected' if sort=='price' else ''}>Цена/ед</option>
-                <option value="total_price" {'selected' if sort=='total_price' else ''}>Стоимость</option>
-                <option value="id" {'selected' if sort=='id' else ''}>ID</option>
-                <option value="status" {'selected' if sort=='status' else ''}>Статус</option>
-            </select>
-        </div>
-        <div><label>Порядок</label>
-            <select id="sortOrder" class="form-control">
-                <option value="asc" {'selected' if order=='asc' else ''}>По возрастанию</option>
-                <option value="desc" {'selected' if order=='desc' else ''}>По убыванию</option>
-            </select>
-        </div>
         <div><button class="btn btn-primary" onclick="submitFilter()">Применить</button></div>
         <div><a href="/admin/bookings" class="btn btn-secondary">Сбросить</a></div>
         <div><button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addBookingModal">➕ Добавить бронь вручную</button></div>
@@ -718,20 +906,7 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
             const filter = document.getElementById('filterInput').value;
             const status = document.getElementById('statusFilter').value;
             const workspace = document.getElementById('workspaceFilter').value;
-            const sort = document.getElementById('sortField').value;
-            const order = document.getElementById('sortOrder').value;
-            window.location.href = `/admin/bookings?filter=${{encodeURIComponent(filter)}}&status=${{status}}&workspace_id=${{workspace}}&sort=${{sort}}&order=${{order}}`;
-        }}
-        function changeSort(field) {{
-            let currentSort = document.getElementById('sortField').value;
-            let currentOrder = document.getElementById('sortOrder').value;
-            if (currentSort === field) {{
-                document.getElementById('sortOrder').value = (currentOrder === 'asc' ? 'desc' : 'asc');
-            }} else {{
-                document.getElementById('sortField').value = field;
-                document.getElementById('sortOrder').value = 'asc';
-            }}
-            submitFilter();
+            window.location.href = `/admin/bookings?filter=${{encodeURIComponent(filter)}}&status=${{status}}&workspace_id=${{workspace}}`;
         }}
     </script>
     """
@@ -740,25 +915,24 @@ async def list_bookings(request: Request, auth=Depends(authenticate)):
     <table class="table table-bordered">
         <thead>
             <tr>
-                <th onclick="changeSort('created_at')" style="cursor:pointer;">Время создания брони</th>
-                <th onclick="changeSort('start_time')" style="cursor:pointer;">Начало</th>
-                <th onclick="changeSort('end_time')" style="cursor:pointer;">Конец</th>
-                <th onclick="changeSort('workspace_name')" style="cursor:pointer;">Место</th>
-                <th onclick="changeSort('type')" style="cursor:pointer;">Тип брони</th>
-                <th onclick="changeSort('hours')" style="cursor:pointer;">Количество часов</th>
-                <th onclick="changeSort('days')" style="cursor:pointer;">Количество дней</th>
-                <th onclick="changeSort('master_name')" style="cursor:pointer;">Мастер</th>
-                <th onclick="changeSort('price')" style="cursor:pointer;">Цена</th>
-                <th onclick="changeSort('total_price')" style="cursor:pointer;">Стоимость</th>
-                <th onclick="changeSort('id')" style="cursor:pointer;">ID</th>
-                <th onclick="changeSort('status')" style="cursor:pointer;">Статус</th>
+                <th><a href="{sort_link('created_at')}">Время создания брони</a></th>
+                <th><a href="{sort_link('start_time')}">Начало</a></th>
+                <th><a href="{sort_link('end_time')}">Конец</a></th>
+                <th><a href="{sort_link('workspace_name')}">Место</a></th>
+                <th><a href="{sort_link('type')}">Тип брони</a></th>
+                <th><a href="{sort_link('hours')}">Количество часов</a></th>
+                <th><a href="{sort_link('days')}">Количество дней</a></th>
+                <th><a href="{sort_link('master_name')}">Мастер</a></th>
+                <th><a href="{sort_link('price')}">Цена</a></th>
+                <th><a href="{sort_link('total_price')}">Стоимость</a></th>
+                <th><a href="{sort_link('id')}">ID</a></th>
+                <th><a href="{sort_link('status')}">Статус</a></th>
                 <th>Действия</th>
             </tr>
         </thead>
         <tbody>
     """
-    table_footer = "</tbody>\\<tr>"
-    content = f"<h2>Бронирования</h2>{filter_html}{table_header}{table_rows}{table_footer}"
+    content = f"<h2>Бронирования</h2>{filter_html}{table_header}{table_rows}</tbody>\\θ"
     return render("Брони", content, master_options, workspace_options)
 
 @app.post("/admin/bookings/add")
@@ -823,30 +997,190 @@ async def edit_booking(bid: int, master_id: int = Form(...), workspace_id: int =
         """, master_id, workspace_id, start, end, total_price, status, bid)
     return JSONResponse({"success": True})
 
+# ------------------- Массовая рассылка -------------------
+@app.get("/admin/mailings", response_class=HTMLResponse)
+async def mailings_list(request: Request, auth=Depends(authenticate)):
+    async with app.state.pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM mailings ORDER BY created_at DESC")
+    table_rows = ""
+    for row in rows:
+        scheduled = row['scheduled_at'].strftime('%d.%m.%Y %H:%M') if row['scheduled_at'] else 'Сейчас'
+        table_rows += f"""
+        <tr>
+            <td>{row['id']}</td>
+            <td>{row['text'][:50]}{'...' if len(row['text'])>50 else ''}</td>
+            <td>{scheduled}</td>
+            <td>{row['status']}</td>
+            <td>
+                <a href="/admin/mailings/delete/{row['id']}" class="btn btn-sm btn-danger" onclick="return confirm('Удалить?')">Удалить</a>
+            </td>
+        </tr>
+        """
+    content = f"""
+    <h2>Рассылки</h2>
+    <a href="/admin/mailings/add" class="btn btn-primary mb-3">➕ Создать рассылку</a>
+    <table class="table table-bordered">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Текст</th>
+                <th>Время отправки</th>
+                <th>Статус</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>{table_rows}</tbody>
+    </table>
+    """
+    return render("Рассылки", content)
+
+@app.get("/admin/mailings/add", response_class=HTMLResponse)
+async def add_mailing_form(auth=Depends(authenticate)):
+    content = """
+    <h2>Создать рассылку</h2>
+    <form method="post">
+        <div class="mb-3"><label>Текст сообщения</label><textarea name="text" class="form-control" rows="5" required></textarea></div>
+        <div class="mb-3"><label>Кнопки (до 3-х, формат: текст;callback_data, каждая с новой строки)</label>
+            <textarea name="buttons" class="form-control" rows="3" placeholder="Например: Подтвердить;confirm&#10;Отмена;cancel"></textarea>
+        </div>
+        <div class="mb-3"><label>Отправить (оставьте пустым для немедленной отправки)</label>
+            <input type="datetime-local" name="scheduled_at" class="form-control">
+        </div>
+        <button type="submit" class="btn btn-success">Создать</button>
+        <a href="/admin/mailings" class="btn btn-secondary">Отмена</a>
+    </form>
+    """
+    return render("Создать рассылку", content)
+
+@app.post("/admin/mailings/add")
+async def add_mailing(
+    text: str = Form(...),
+    buttons: str = Form(""),
+    scheduled_at: str = Form(""),
+    auth=Depends(authenticate)
+):
+    import json
+    buttons_json = None
+    if buttons.strip():
+        btn_list = []
+        for line in buttons.strip().split('\n'):
+            if ';' in line:
+                label, data = line.split(';', 1)
+                btn_list.append({'label': label.strip(), 'callback_data': data.strip()})
+            else:
+                btn_list.append({'label': line.strip(), 'callback_data': line.strip()})
+        buttons_json = json.dumps(btn_list)
+    scheduled = None
+    if scheduled_at:
+        scheduled = datetime.fromisoformat(scheduled_at)
+    async with app.state.pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO mailings (text, buttons, scheduled_at, status)
+            VALUES ($1, $2, $3, 'pending')
+        """, text, buttons_json, scheduled)
+    return RedirectResponse(url="/admin/mailings", status_code=303)
+
+@app.get("/admin/mailings/delete/{mid}")
+async def delete_mailing(mid: int, auth=Depends(authenticate)):
+    async with app.state.pool.acquire() as conn:
+        await conn.execute("DELETE FROM mailings WHERE id = $1", mid)
+    return RedirectResponse(url="/admin/mailings", status_code=303)
+
 # ------------------- Мастера -------------------
 @app.get("/admin/masters", response_class=HTMLResponse)
 async def list_masters(request: Request, auth=Depends(authenticate)):
     sort = request.query_params.get('sort', 'id')
     order = request.query_params.get('order', 'asc')
+    name_filter = request.query_params.get('name', '').strip()
+    phone_filter = request.query_params.get('phone', '').strip()
+
     if order not in ('asc','desc'): order='asc'
-    allowed=['id','full_name','telegram_id','created_at']
-    if sort not in allowed: sort='id'
+    allowed_sort = ['id', 'full_name', 'telegram_id', 'created_at']
+    if sort not in allowed_sort: sort='id'
+
+    query = "SELECT * FROM masters WHERE 1=1"
+    params = []
+    if name_filter:
+        query += " AND full_name ILIKE $" + str(len(params)+1)
+        params.append(f"%{name_filter}%")
+    if phone_filter:
+        query += " AND phone ILIKE $" + str(len(params)+1)
+        params.append(f"%{phone_filter}%")
+    query += f" ORDER BY {sort} {order}"
+
     async with app.state.pool.acquire() as conn:
-        rows = await conn.fetch(f"SELECT * FROM masters ORDER BY {sort} {order}")
+        rows = await conn.fetch(query, *params)
+
     table_rows = ""
     for row in rows:
         created_fmt = row['created_at'].strftime('%d.%m.%Y %H:%M:%S') if row['created_at'] else ''
-        table_rows += f"<tr><td>{row['id']}</td><td>{row['full_name'] or ''}</td><td>{row['telegram_id']}</td><td>{row['phone'] or ''}</td><td>{created_fmt}</td><td>{'Активен' if not row['is_blocked'] else 'Заблокирован'}</td><td><button class='btn btn-sm btn-primary' onclick='editMaster({row['id']})'>✏️ Ред.</button> {'<a href=\"/admin/masters/block/'+str(row['id'])+'\" class=\"btn btn-sm btn-warning\">Заблокировать</a>' if not row['is_blocked'] else '<a href=\"/admin/masters/unblock/'+str(row['id'])+'\" class=\"btn btn-sm btn-success\">Разблокировать</a>'}</td></tr>"
-    asc_desc = "asc" if order=="desc" else "desc"
-    content = f"<h2>Мастера</h2><button class='btn btn-primary mb-3' data-bs-toggle='modal' data-bs-target='#addMasterModal'>➕ Добавить мастера</button><table class='table table-bordered'><thead><tr><th><a href='/admin/masters?sort=id&order={asc_desc}'>ID</a></th><th><a href='/admin/masters?sort=full_name&order={asc_desc}'>Имя</a></th><th><a href='/admin/masters?sort=telegram_id&order={asc_desc}'>Telegram ID</a></th><th>Телефон</th><th><a href='/admin/masters?sort=created_at&order={asc_desc}'>Дата регистрации</a></th><th>Статус</th><th>Действия</th></tr></thead><tbody>{table_rows}</tbody></table>"
+        table_rows += f"""
+        <tr>
+            <td>{row['id']}</td>
+            <td>{row['full_name'] or ''}</td>
+            <td>{row['telegram_id']}</td>
+            <td>{row['phone'] or ''}</td>
+            <td>{created_fmt}</td>
+            <td>{'Активен' if not row['is_blocked'] else 'Заблокирован'}</td>
+            <td>
+                <button class='btn btn-sm btn-primary' onclick='editMaster({row['id']})'>✏️ Ред.</button>
+                {'<a href=\"/admin/masters/block/'+str(row['id'])+'\" class=\"btn btn-sm btn-warning\">Заблокировать</a>' if not row['is_blocked'] else '<a href=\"/admin/masters/unblock/'+str(row['id'])+'\" class=\"btn btn-sm btn-success\">Разблокировать</a>'}
+            </td>
+        </tr>
+        """
+
+    def sort_link(field):
+        new_order = 'desc' if sort == field and order == 'asc' else 'asc'
+        return f"/admin/masters?sort={field}&order={new_order}&name={name_filter}&phone={phone_filter}"
+
+    filter_html = f"""
+    <div class="filter-bar" style="margin-bottom:20px; display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+        <div><label>Имя</label><input type="text" id="nameFilter" value="{name_filter}" class="form-control" placeholder="Поиск по имени..."></div>
+        <div><label>Телефон</label><input type="text" id="phoneFilter" value="{phone_filter}" class="form-control" placeholder="Поиск по телефону..."></div>
+        <div><button class="btn btn-primary" onclick="submitFilter()">Применить</button></div>
+        <div><a href="/admin/masters" class="btn btn-secondary">Сбросить</a></div>
+    </div>
+    <script>
+        function submitFilter() {{
+            const name = document.getElementById('nameFilter').value;
+            const phone = document.getElementById('phoneFilter').value;
+            window.location.href = `/admin/masters?name=${{encodeURIComponent(name)}}&phone=${{encodeURIComponent(phone)}}`;
+        }}
+    </script>
+    """
+
+    table_header = f"""
+    <table class="table table-bordered">
+        <thead>
+            <tr>
+                <th><a href="{sort_link('id')}">ID</a></th>
+                <th><a href="{sort_link('full_name')}">Имя</a></th>
+                <th><a href="{sort_link('telegram_id')}">Telegram ID</a></th>
+                <th>Телефон</th>
+                <th><a href="{sort_link('created_at')}">Дата регистрации</a></th>
+                <th>Статус</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+    """
+    content = f"<h2>Мастера</h2><button class='btn btn-primary mb-3' data-bs-toggle='modal' data-bs-target='#addMasterModal'>➕ Добавить мастера</button>{filter_html}{table_header}{table_rows}</tbody>\\θ"
     return render("Мастера", content)
 
 @app.post("/admin/masters/add")
 async def add_master(full_name: str = Form(...), phone: str = Form(None), notes: str = Form(None), auth=Depends(authenticate)):
+    # Валидация телефона (если поле не пустое)
+    if phone and not validate_phone(phone):
+        return HTMLResponse("<script>alert('Некорректный номер телефона'); window.history.back();</script>")
+    
     async with app.state.pool.acquire() as conn:
+        # Генерируем отрицательный telegram_id для вручную добавленных мастеров
         last_id = await conn.fetchval("SELECT COALESCE(MIN(telegram_id), 0) FROM masters WHERE telegram_id < 0")
         new_telegram_id = (last_id - 1) if last_id < 0 else -1
-        await conn.execute("INSERT INTO masters (telegram_id, full_name, phone, notes, created_at) VALUES ($1,$2,$3,$4,now())", new_telegram_id, full_name, phone, notes)
+        await conn.execute("""
+            INSERT INTO masters (telegram_id, full_name, phone, notes, created_at)
+            VALUES ($1, $2, $3, $4, now())
+        """, new_telegram_id, full_name, phone, notes)
     return RedirectResponse(url="/admin/masters", status_code=303)
 
 @app.get("/admin/masters/block/{mid}")
@@ -870,23 +1204,17 @@ async def master_info(mid: int, auth=Depends(authenticate)):
 
 @app.post("/admin/masters/edit_ajax/{mid}")
 async def edit_master_ajax(mid: int, full_name: str = Form(None), phone: str = Form(None), notes: str = Form(None), auth=Depends(authenticate)):
+    # Валидация телефона (если поле не пустое)
+    if phone and not validate_phone(phone):
+        return JSONResponse({"success": False, "error": "Некорректный номер телефона"}, status_code=400)
+    
     async with app.state.pool.acquire() as conn:
-        await conn.execute("UPDATE masters SET full_name=$1, phone=$2, notes=$3 WHERE id=$4", full_name, phone, notes, mid)
+        await conn.execute("""
+            UPDATE masters SET full_name=$1, phone=$2, notes=$3 WHERE id=$4
+        """, full_name, phone, notes, mid)
     return JSONResponse({"success": True})
 
 # ------------------- Статистика и финансы -------------------
-@app.get("/admin/statistics", response_class=HTMLResponse)
-async def statistics(auth=Depends(authenticate)):
-    async with app.state.pool.acquire() as conn:
-        pending = await conn.fetchval("SELECT COUNT(*) FROM bookings WHERE status='pending'")
-        paid = await conn.fetchval("SELECT COUNT(*) FROM bookings WHERE status='paid'")
-        completed = await conn.fetchval("SELECT COUNT(*) FROM bookings WHERE status='completed'")
-        cancelled = await conn.fetchval("SELECT COUNT(*) FROM bookings WHERE status='cancelled'")
-        top = await conn.fetch("SELECT w.name, COUNT(b.id) as count FROM bookings b JOIN workspaces w ON b.workspace_id=w.id GROUP BY w.id ORDER BY count DESC LIMIT 5")
-    top_html = "<ul>" + "".join(f"<li>{row['name']} – {row['count']} брони</li>" for row in top) + "</ul>"
-    content = f"<h2>Статистика (текстовая)</h2><div class='row'><div class='col-md-6'><h4>Брони по статусам</h4><ul><li>Ожидают оплаты: {pending}</li><li>Оплачены: {paid}</li><li>Завершены: {completed}</li><li>Отменены: {cancelled}</li></ul></div><div class='col-md-6'><h4>Загрузка мест (топ-5)</h4>{top_html}</div></div>"
-    return render("Статистика", content)
-
 @app.get("/admin/finance", response_class=HTMLResponse)
 async def finance(auth=Depends(authenticate)):
     async with app.state.pool.acquire() as conn:

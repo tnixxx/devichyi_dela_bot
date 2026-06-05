@@ -68,13 +68,7 @@ TEXTS = {
         'days_taken': "Некоторые дни уже заняты: {}. Выберите другой диапазон.",
 
         # Подтверждение брони
-        'booking_summary': (
-        "✅ Подтверждение бронирования:\n"
-        "Место: {workspace}\n"
-        "Тип: {type}\n"
-        "{description}\n"
-        "Сумма: {total} руб{stars_line}\n\n"
-        "Выберите способ оплаты:"),
+        'booking_summary': "✅ Подтверждение бронирования:\nМесто: {workspace}\nТип: {type}\n{description}\nСумма: {total} руб{stars_line}\n\nВыберите способ оплаты:",
         'booking_summary_stars': " (или {stars} звёзд, если выбран Telegram Stars)",
         'daily_description': "Весь день {date} (6:00-22:00)",
         'multiday_description': "с {start} по {end} (ежедневно 6:00-22:00)",
@@ -83,6 +77,9 @@ TEXTS = {
         'back_to_rent_type_from_pay': "⬅️ Назад к выбору типа",
 
         # Оплата и таймаут
+        'invoice_title': 'Бронирование места',
+        'invoice_description': 'Оплата аренды рабочего места в коворкинге «Девичьи дела»',
+        'invoice_label': 'Аренда места',
         'booking_pending_timeout': "⏰ Время бронирования истекло. Пожалуйста, начните бронирование заново.",
         'payment_timeout': "Время бронирования истекло. Пожалуйста, начните заново.",
         'booking_expired': "Время бронирования истекло. Повторите попытку.",
@@ -139,7 +136,6 @@ TEXTS = {
         'end_date_before_start': "Дата окончания не может быть раньше даты начала. Попробуйте снова.",
         'edit_message_not_found': "Ошибка: не найдено сообщение для редактирования. Попробуйте начать бронирование заново.",
         'workspace_data_lost': "Данные о месте утеряны. Пожалуйста, начните бронирование заново.",
-        # НЕ ПЕРЕВЕДЕНО
         'cancel_booking_btn': '❌ Отменить бронь',
         'cancel_booking_prompt': 'Если вы передумали, можете отменить бронь, пока она не оплачена.',
         'booking_cancelled': 'Бронь отменена.',
@@ -231,6 +227,9 @@ TEXTS = {
         'back_to_rent_type_from_pay': "⬅️ Back to rental type",
 
         # Payment and timeout
+        'invoice_title': 'Booking a workspace',
+        'invoice_description': 'Payment for renting a workplace at "Devichyi dela" coworking',
+        'invoice_label': 'Rent a workspace',
         'booking_pending_timeout': "⏰ Booking time has expired. Please start the booking again.",
         'payment_timeout': "Booking time has expired. Please start over.",
         'booking_expired': "Booking time has expired. Please try again.",
@@ -286,6 +285,8 @@ TEXTS = {
         'end_date_before_start': "End date cannot be earlier than start date. Please try again.",
         'edit_message_not_found': "Error: message to edit not found. Please start booking again.",
         'workspace_data_lost': "Workspace data lost. Please start booking again.",
+        'cancel_booking_btn': '❌ Cancel booking',
+        'cancel_booking_prompt': 'If you changed your mind, you can cancel the booking before it is paid.',
 
     }
 }
