@@ -13,6 +13,9 @@ TEXTS = {
 
         # О коворкинге
         'about_text': "📍 <b>Коворкинг «Девичьи дела»</b>\nАдрес: г. Тюмень ул. Республики, 26\n🕒 Работаем ежедневно с 6:00 до 22:00\n📞 Контакт: @devichyi_dela",
+        'show_map_btn': "📍 Показать на карте",
+        'dgis_btn': "2ГИС",
+        'yandex_maps_btn': "Яндекс Карты",
 
         # Язык
         'choose_language': "Выберите язык:",
@@ -141,7 +144,9 @@ TEXTS = {
         'booking_cancelled': 'Бронь отменена.',
         'booking_already_paid': 'Бронь уже оплачена, отмена невозможна.',
         'day_already_started': 'Сегодняшний день уже начался, забронировать его нельзя. Выберите другой день.',
-        
+        # НЕ ПЕРЕВЕДЕНО
+        'workspace_data_lost': '❌ Данные о рабочем месте потеряны. Пожалуйста, начните бронирование заново.',
+        'return_to_menu_hint': 'Нажмите кнопку ниже, чтобы вернуться в главное меню.',
 
     },
     'en': {
@@ -156,6 +161,9 @@ TEXTS = {
 
         # About coworking
         'about_text': "📍 <b>'Devichyi dela' coworking</b>\nAddress: Tyumen, 26 Respubliki St.\n🕒 Open daily from 6:00 to 22:00\n📞 Contact: @devichyi_dela",
+        'show_map_btn': "📍 Show on map",
+        'dgis_btn': "2GIS",
+        'yandex_maps_btn': "Yandex Maps",
 
         # Language
         'choose_language': "Choose language:",
@@ -287,6 +295,7 @@ TEXTS = {
         'workspace_data_lost': "Workspace data lost. Please start booking again.",
         'cancel_booking_btn': '❌ Cancel booking',
         'cancel_booking_prompt': 'If you changed your mind, you can cancel the booking before it is paid.',
+        'return_to_menu_hint': 'Press the button below to return to the main menu.',
 
     }
 }

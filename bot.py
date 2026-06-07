@@ -5,7 +5,9 @@ import calendar
 import uuid
 import os
 from io import BytesIO
-
+from dotenv import load_dotenv
+from icalendar import Calendar, Event, Alarm
+from locales import TEXTS
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -16,6 +18,7 @@ from aiogram.types import (
     CallbackQuery, InputMediaPhoto, LabeledPrice,
     PreCheckoutQuery, SuccessfulPayment
 )
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 from database import create_pool
 from dotenv import load_dotenv
@@ -26,6 +29,10 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 # ADMIN_ID=os.getenv('ADMIN_ID')
 ADMIN_ID=621695401
+COWORKING_LATITUDE = float(os.getenv("COWORKING_LATITUDE", "0.0"))
+COWORKING_LONGITUDE = float(os.getenv("COWORKING_LONGITUDE", "0.0"))
+COWORKING_TITLE = os.getenv("COWORKING_TITLE", "Девичьи дела")
+COWORKING_ADDRESS = os.getenv("COWORKING_ADDRESS", "")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -80,13 +87,63 @@ def get_text(key, lang='ru', **kwargs):
         value = value.format(**kwargs)
     return value
 
-async def get_user_language(user_id):
+async def get_user_language(user_id, telegram_language_code=None):
     if user_id < 0:   # вручную добавленные мастера
         return 'ru'
     pool = dp['db_pool']
     async with pool.acquire() as conn:
         lang = await conn.fetchval("SELECT language FROM masters WHERE telegram_id = $1", user_id)
-        return lang if lang else 'ru'
+        if lang:
+            return lang
+        # Автоопределение по системному языку Telegram
+        if telegram_language_code and telegram_language_code.lower().startswith('en'):
+            return 'en'
+        return 'ru'
+
+async def log_event(user_id: int, event_type: str, payload: dict = None):
+    try:
+        pool = dp['db_pool']
+        import json
+        payload_json = json.dumps(payload, ensure_ascii=False) if payload else None
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO user_events (user_id, event_type, payload) VALUES ($1, $2, $3::jsonb)",
+                user_id, event_type, payload_json
+            )
+    except Exception as e:
+        logging.warning(f"log_event error: {e}")
+    
+async def ensure_selected_workspace(state: FSMContext, user_id: int, chat_id: int) -> bool:
+    """
+    Проверяет наличие selected_workspace в состоянии.
+    Если нет, пытается восстановить по selected_workspace_id.
+    Возвращает True, если всё успешно, иначе False.
+    """
+    data = await state.get_data()
+    if 'selected_workspace' in data:
+        return True
+    workspace_id = data.get('selected_workspace_id')
+    if not workspace_id:
+        # дополнительная попытка из temp_booking (если бронирование уже в процессе)
+        temp = data.get('temp_booking')
+        if temp and 'workspace_id' in temp:
+            workspace_id = temp['workspace_id']
+    if not workspace_id:
+        lang = await get_user_language(user_id)
+        await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
+        await state.clear()
+        return False
+    pool = dp['db_pool']
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM workspaces WHERE id = $1", workspace_id)
+        if not row:
+            lang = await get_user_language(user_id)
+            await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
+            await state.clear()
+            return False
+        ws = dict(row)
+        await state.update_data(selected_workspace=ws)
+    return True
     
 def get_workspace_name(original_name: str, lang: str) -> str:
     workspaces_dict = TEXTS.get(lang, {}).get('workspaces', {})
@@ -116,9 +173,13 @@ async def on_shutdown():
         await dp['db_pool'].close()
     logging.info("Бот остановлен")
 
+async def health_handler(request):
+    return web.Response(text='{"status":"ok"}', content_type='application/json')
+
 async def start_web_server():
     app = web.Application()
     app.router.add_static('/static', 'static')
+    app.router.add_get('/health', health_handler)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', 8080)
@@ -172,7 +233,22 @@ async def process_end_date(callback: CallbackQuery, state: FSMContext):
 # ---------- Команда /start ----------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    lang = await get_user_language(message.from_user.id)
+    tg_lang = message.from_user.language_code  # например 'en', 'ru', 'en-US'
+    lang = await get_user_language(message.from_user.id, tg_lang)
+    await log_event(message.from_user.id, 'bot_start')
+
+    # Если мастер уже есть в БД, но язык не сохранён — сохраняем автоопределённый
+    pool = dp['db_pool']
+    async with pool.acquire() as conn:
+        saved = await conn.fetchval(
+            "SELECT language FROM masters WHERE telegram_id = $1", message.from_user.id
+        )
+        if saved is None:
+            await conn.execute(
+                "UPDATE masters SET language=$1 WHERE telegram_id=$2 AND language IS NULL",
+                lang, message.from_user.id
+            )
+
     await message.answer(get_text('welcome', lang))
     await message.answer_photo(
         photo=DEFAULT_IMAGE,
@@ -193,12 +269,47 @@ async def cmd_dbcheck(message: types.Message):
 
 # ---------- Обработчик "О коворкинге" ----------
 @dp.callback_query(lambda c: c.data == "main_about")
-async def about_coworking(callback: CallbackQuery):
+async def about_coworking(callback: CallbackQuery, state: FSMContext):
     lang = await get_user_language(callback.from_user.id)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=get_text('show_map_btn', lang), callback_data="about_show_map")],
+        [
+            InlineKeyboardButton(text=get_text('dgis_btn', lang), url="https://2gis.ru/tyumen/firm/70000001088728475?immersive=on"),
+            InlineKeyboardButton(text=get_text('yandex_maps_btn', lang), url="https://yandex.ru/maps/-/CPdnv8J3"),
+        ],
+        [InlineKeyboardButton(text=get_text('back_btn', lang), callback_data="back_to_main")]
+    ])
+
+    await callback.message.edit_caption(
+        caption=get_text('about_text', lang),
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+    await state.update_data(about_extra_messages=[])
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "about_show_map")
+async def about_show_map(callback: CallbackQuery, state: FSMContext):
+    lang = await get_user_language(callback.from_user.id)
+
+    # Убираем кнопку карты после нажатия, чтобы не отправлять venue дважды
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=get_text('back_btn', lang), callback_data="back_to_main")]
     ])
-    await callback.message.edit_caption(caption=get_text('about_text', lang), reply_markup=kb, parse_mode="HTML")
+    await callback.message.edit_reply_markup(reply_markup=kb)
+
+    venue_msg = await callback.message.answer_venue(
+        latitude=COWORKING_LATITUDE,
+        longitude=COWORKING_LONGITUDE,
+        title=COWORKING_TITLE,
+        address=COWORKING_ADDRESS
+    )
+
+    data = await state.get_data()
+    extra = data.get('about_extra_messages', [])
+    extra.append(venue_msg.message_id)
+    await state.update_data(about_extra_messages=extra)
     await callback.answer()
 
 # ---------- Обработчик языка ----------
@@ -230,11 +341,39 @@ async def set_language(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(lambda c: c.data == "back_to_main")
 async def back_to_main_edit(callback: CallbackQuery, state: FSMContext):
     lang = await get_user_language(callback.from_user.id)
-    await state.clear()
-    await callback.message.edit_caption(
+    data = await state.get_data()
+    
+    # Удаляем дополнительные сообщения раздела (карта, текст, кнопка)
+    extra_ids = data.get('about_extra_messages', [])
+    for msg_id in extra_ids:
+        try:
+            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=msg_id)
+        except Exception:
+            pass
+    
+    # Удаляем исходное сообщение с фото (если оно сохранено)
+    original_id = data.get('original_main_message_id')
+    if original_id:
+        try:
+            await callback.bot.delete_message(chat_id=callback.message.chat.id, message_id=original_id)
+        except Exception:
+            pass
+    
+    # Отправляем новое главное меню (свежее фото)
+    await callback.message.answer_photo(
+        photo=DEFAULT_IMAGE,
         caption=get_text('main_menu_caption', lang),
         reply_markup=main_menu_keyboard(lang)
     )
+    
+    # Удаляем сообщение, на котором была нажата кнопка «Назад» (оно уже в extra_ids, но удалим отдельно)
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    
+    # Очищаем состояние, чтобы старые ID не мешали
+    await state.clear()
     await callback.answer()
 
 # ---------- Начало бронирования ----------
@@ -247,6 +386,7 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
             lang = await get_user_language(callback.from_user.id)
             await callback.answer(get_text('blocked_message', lang), show_alert=True)
             return
+    await log_event(callback.from_user.id, 'booking_started')
     await callback.message.delete()
     await state.update_data(category_index=0)
     await show_category_album(callback.message.chat.id, state, callback.from_user.id)
@@ -332,6 +472,8 @@ async def navigate_categories(callback: CallbackQuery, state: FSMContext):
     else:
         idx = (idx + 1) % total
     await state.update_data(category_index=idx)
+    category = CATEGORIES[idx % total]
+    await log_event(callback.from_user.id, 'browse_category', {'category_id': category['id'], 'category_name': category['name']})
     await show_category_album(callback.message.chat.id, state, callback.from_user.id)
     try:
         await callback.answer()
@@ -343,6 +485,10 @@ async def select_workspace_from_list(callback: CallbackQuery, state: FSMContext)
     workspace_id = int(callback.data.split("_")[2])
     await state.update_data(selected_workspace_id=workspace_id)
     data = await state.get_data()
+    # Find workspace name from the list stored in state
+    ws_list = data.get('workspaces_list', [])
+    ws_name = next((w['name'] for w in ws_list if w['id'] == workspace_id), str(workspace_id))
+    await log_event(callback.from_user.id, 'browse_workspace', {'workspace_id': workspace_id, 'workspace_name': ws_name})
     for msg_id in data.get('album_msg_ids', []):
         try:
             await bot.delete_message(chat_id=callback.message.chat.id, message_id=msg_id)
@@ -753,30 +899,15 @@ async def process_date(callback: CallbackQuery, state: FSMContext):
 # ---------- Почасовая аренда ----------
 async def show_available_slots(chat_id: int, state: FSMContext, user_id: int):
     lang = await get_user_language(user_id)
+    
+    # Восстанавливаем рабочее место, если нужно
+    if not await ensure_selected_workspace(state, user_id, chat_id):
+        return
+    
     data = await state.get_data()
-
-    # Проверяем наличие selected_workspace, если нет – восстанавливаем
-    if 'selected_workspace' not in data:
-        temp = data.get('temp_booking')
-        if temp and 'workspace_id' in temp:
-            pool = dp['db_pool']
-            async with pool.acquire() as conn:
-                row = await conn.fetchrow("SELECT * FROM workspaces WHERE id = $1", temp['workspace_id'])
-                if row:
-                    ws = dict(row)
-                    await state.update_data(selected_workspace=ws)
-                    data = await state.get_data()
-                else:
-                    await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
-                    await state.clear()
-                    return
-        else:
-            await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
-            await state.clear()
-            return
-
     workspace_id = data['selected_workspace']['id']
     selected_date = data['selected_date']
+    
     pool = dp['db_pool']
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     slots = []
@@ -820,6 +951,7 @@ async def show_available_slots(chat_id: int, state: FSMContext, user_id: int):
     control_msg_id = data.get('dynamic_msg_id')
     await bot.edit_message_text(text=text, chat_id=chat_id, message_id=control_msg_id, reply_markup=kb)
     await state.update_data(slots=slots)
+
 
 @dp.callback_query(BookingStates.choosing_time_slot, lambda c: c.data.startswith("slot_"))
 async def process_time_slot(callback: CallbackQuery, state: FSMContext):
@@ -887,28 +1019,12 @@ async def back_to_slots(callback: CallbackQuery, state: FSMContext):
 # ---------- Проверка дневной и многодневной аренды ----------
 async def check_daily_availability(chat_id: int, state: FSMContext, user_id: int):
     lang = await get_user_language(user_id)
+    
+    # Восстанавливаем рабочее место, если нужно
+    if not await ensure_selected_workspace(state, user_id, chat_id):
+        return
+    
     data = await state.get_data()
-
-    # Проверяем наличие selected_workspace, если нет – восстанавливаем
-    if 'selected_workspace' not in data:
-        temp = data.get('temp_booking')
-        if temp and 'workspace_id' in temp:
-            pool = dp['db_pool']
-            async with pool.acquire() as conn:
-                row = await conn.fetchrow("SELECT * FROM workspaces WHERE id = $1", temp['workspace_id'])
-                if row:
-                    ws = dict(row)
-                    await state.update_data(selected_workspace=ws)
-                    data = await state.get_data()
-                else:
-                    await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
-                    await state.clear()
-                    return
-        else:
-            await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
-            await state.clear()
-            return
-
     workspace_id = data['selected_workspace']['id']
     selected_date = data['selected_date']
 
@@ -946,37 +1062,16 @@ async def check_daily_availability(chat_id: int, state: FSMContext, user_id: int
 
 async def check_multiday_availability(chat_id: int, state: FSMContext, user_id: int):
     lang = await get_user_language(user_id)
+    
+    # Восстанавливаем рабочее место, если нужно
+    if not await ensure_selected_workspace(state, user_id, chat_id):
+        return
+    
     data = await state.get_data()
-    # Проверяем наличие selected_workspace
-    if 'selected_workspace' not in data:
-        # Пытаемся восстановить из temp_booking
-        temp = data.get('temp_booking')
-        if temp and 'workspace_id' in temp:
-            pool = dp['db_pool']
-            async with pool.acquire() as conn:
-                row = await conn.fetchrow("SELECT * FROM workspaces WHERE id = $1", temp['workspace_id'])
-                if row:
-                    ws = dict(row)
-                    await state.update_data(selected_workspace=ws)
-                else:
-                    kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="back_to_main_from_booking")]
-                    ])
-                    await bot.send_message(chat_id, get_text('workspace_data_lost', lang), reply_markup=kb)
-                    await state.clear()
-                    return
-        else:
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="back_to_main_from_booking")]
-            ])
-            await bot.send_message(chat_id, get_text('workspace_data_lost', lang), reply_markup=kb)
-            await state.clear()
-            return
-        # Обновляем данные
-        data = await state.get_data()
     workspace_id = data['selected_workspace']['id']
     start_date = data['start_date']
     end_date = data['end_date']
+    
     pool = dp['db_pool']
     current = start_date
     occupied_days = []
@@ -1119,6 +1214,7 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
 # ---------- Оплата Telegram Stars ----------
 @dp.callback_query(BookingStates.waiting_for_payment, lambda c: c.data == "pay_stars")
 async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
+    await log_event(callback.from_user.id, 'payment_attempt', {'method': 'stars'})
     data = await state.get_data()
     temp = data.get('temp_booking')
     if not temp:
@@ -1127,13 +1223,20 @@ async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
+    # Цена в звёздах вычисляется до INSERT — именно она идёт в total_price
+    stars_amount = int(temp.get('stars_price') or 0)
+    if stars_amount == 0:
+        stars_amount = 1  # минимум 1 Star если цена в Stars не настроена
+
     pool = dp['db_pool']
     async with pool.acquire() as conn:
         master = await conn.fetchrow("SELECT id FROM masters WHERE telegram_id = $1", callback.from_user.id)
         if not master:
+            tg_lang = callback.from_user.language_code or ''
+            auto_lang = 'en' if tg_lang.lower().startswith('en') else 'ru'
             master = await conn.fetchrow(
-                "INSERT INTO masters (telegram_id, full_name) VALUES ($1, $2) RETURNING id",
-                callback.from_user.id, callback.from_user.full_name
+                "INSERT INTO masters (telegram_id, full_name, language) VALUES ($1, $2, $3) RETURNING id",
+                callback.from_user.id, callback.from_user.full_name, auto_lang
             )
         master_id = master['id']
 
@@ -1152,29 +1255,36 @@ async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
             await callback.answer()
             return
 
-        # Создаём бронь со статусом pending
+        # Создаём бронь с total_price = Stars (не рублёвая цена)
         booking = await conn.fetchrow("""
             INSERT INTO bookings (master_id, workspace_id, start_time, end_time, status, payment_method, payment_status, created_at, total_price)
             VALUES ($1, $2, $3, $4, 'pending', 'stars', 'pending', now(), $5)
             RETURNING id
-        """, master_id, temp['workspace_id'], temp['start_time'], temp['end_time'], temp['total_price'])
+        """, master_id, temp['workspace_id'], temp['start_time'], temp['end_time'], stars_amount)
 
         booking_id = booking['id']
         await state.update_data(booking_id=booking_id)
-
-    # Цена в звёздах для инвойса
-    stars_amount = temp.get('stars_price', 0)
-    # Если по какой-то причине stars_price не задана или равна 0, используем рублёвую цену как звёзды (fallback)
-    if not stars_amount:
-        stars_amount = int(temp['total_price'])
-        # Если и total_price 0, то ставим 1 звезду (тестовое значение)
-        if stars_amount == 0:
-            stars_amount = 1
 
     payload = f"booking_{uuid.uuid4().hex}"
     await state.update_data(payment_payload=payload, user_id=callback.from_user.id)
 
     lang = await get_user_language(callback.from_user.id)
+
+    # Удаляем сообщение с подтверждением брони
+    data = await state.get_data()
+    control_msg_id = data.get('dynamic_msg_id')
+    if control_msg_id:
+        try:
+            await bot.delete_message(chat_id=callback.message.chat.id, message_id=control_msg_id)
+        except Exception:
+            pass
+
+    # Первая кнопка обязательно pay=True, иначе Telegram отклонит запрос
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"⭐ {stars_amount} Stars", pay=True)],
+        [InlineKeyboardButton(text=get_text('cancel_booking_btn', lang), callback_data=f"cancel_booking_{booking_id}")]
+    ])
+
     invoice = await callback.message.answer_invoice(
         title=get_text('invoice_title', lang),
         description=get_text('invoice_description', lang),
@@ -1184,19 +1294,10 @@ async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
         prices=[LabeledPrice(label=get_text('invoice_label', lang), amount=stars_amount)],
         need_name=False,
         need_phone_number=False,
-        need_email=False
-    )
-    await state.update_data(invoice_msg_id=invoice.message_id)
-
-    # Кнопка отмены
-    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=get_text('cancel_booking_btn', lang), callback_data=f"cancel_booking_{booking_id}")]
-    ])
-    cancel_msg = await callback.message.answer(
-        get_text('cancel_booking_prompt', lang),
+        need_email=False,
         reply_markup=cancel_kb
     )
-    await state.update_data(cancel_msg_id=cancel_msg.message_id)
+    await state.update_data(invoice_msg_id=invoice.message_id)
 
     asyncio.create_task(expire_booking_task(booking_id, callback.message.chat.id, invoice.message_id, callback.from_user.id))
 
@@ -1211,16 +1312,11 @@ async def cancel_booking(callback: CallbackQuery, state: FSMContext):
         status = await conn.fetchval("SELECT status FROM bookings WHERE id = $1", booking_id)
         if status == 'pending':
             await conn.execute("DELETE FROM bookings WHERE id = $1", booking_id)
-            # Удаляем сообщение с кнопкой отмены
-            await callback.message.delete()
-            # Удаляем сообщение с инвойсом (по возможности)
-            data = await state.get_data()
-            invoice_msg_id = data.get('invoice_msg_id')
-            if invoice_msg_id:
-                try:
-                    await bot.delete_message(chat_id=callback.message.chat.id, message_id=invoice_msg_id)
-                except:
-                    pass
+            await log_event(callback.from_user.id, 'booking_cancelled')
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
             await callback.answer(get_text('booking_cancelled', lang), show_alert=True)
         else:
             await callback.answer(get_text('booking_already_paid', lang), show_alert=True)
@@ -1274,7 +1370,11 @@ async def successful_payment_handler(message: types.Message, state: FSMContext):
             await message.answer(get_text('booking_already_processed', lang))
             await state.clear()
             return
-        await conn.execute("UPDATE bookings SET status='paid', payment_status='paid' WHERE id=$1", booking_id)
+        actual_stars = message.successful_payment.total_amount
+        await conn.execute(
+            "UPDATE bookings SET status='paid', payment_status='paid', total_price=$1 WHERE id=$2",
+            actual_stars, booking_id
+        )
         start_time = row['start_time']
         end_time = row['end_time']
         workspace_name = row['workspace_name']
@@ -1285,6 +1385,7 @@ async def successful_payment_handler(message: types.Message, state: FSMContext):
             workspace_name=localized_workspace_name,
             booking_id=booking_id
         )
+    await log_event(message.from_user.id, 'booking_completed', {'booking_id': booking_id, 'payment_method': 'stars'})
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=get_text('reminder_telegram_btn', lang), callback_data="reminder_telegram")],
