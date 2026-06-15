@@ -7,7 +7,7 @@ TEXTS = {
         'main_menu_caption': "Выберите действие:",
         'book_btn': "📅 Забронировать",
         'about_btn': "💬 О коворкинге",
-        'lang_btn': "🇷🇺/🇺🇸 Язык",
+        'lang_btn': "🇷🇺/🇬🇧 Язык",
         'back_btn': "⬅️ Назад",
         'main_menu_btn': "🏠 Главное меню",
 
@@ -20,8 +20,9 @@ TEXTS = {
         # Язык
         'choose_language': "Выберите язык:",
         'lang_changed': "Язык успешно изменён на русский.",
+        'lang_already_selected': "Этот язык уже выбран.",
         'lang_ru': "🇷🇺 Русский",
-        'lang_en': "🇺🇸 English",
+        'lang_en': "🇬🇧 English",
 
         # Категории
         'choose_category': "Выберите категорию места:",
@@ -37,15 +38,15 @@ TEXTS = {
 
         # Выбор места
         'select_workspace': "Выберите место:",
-        'prev_category': "⬅️ Предыдущая категория",
-        'next_category': "Следующая категория ➡️",
+        'prev_category': "⬅️ Предыдущая",
+        'next_category': "Следующая ➡️",
         'back_to_categories': "⬅️ К категориям",
 
         # Типы аренды
         'choose_rental_type': "Выберите тип аренды:",
-        'hourly': "⏱ Почасовая (1 час)",
-        'daily': "☀️ На день (6:00-22:00)",
-        'multiday': "📅 На несколько дней (фикс. ставка)",
+        'hourly': "Почасовая",
+        'daily': "На день (6:00–22:00)",
+        'multiday': "На несколько дней",
         'back_to_workspace': "⬅️ Назад к месту",
 
         # Календарь
@@ -58,11 +59,14 @@ TEXTS = {
         'months': ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"],
         'weekdays_short': ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
         'back_to_start_date': "⬅️ К выбору начала",
-        'choose_concrete_date': "Выберите конкретное число", 
+        'choose_concrete_date': "Выберите конкретное число",
+        'past_date': "Эта дата уже прошла, забронировать её нельзя.",
 
         # Выбор времени (почасовая)
         'choose_start_time': "Выберите время начала для {}:",
-        'choose_duration': "Вы выбрали начало в {}. Укажите длительность:",
+        'choose_slot': "Выберите временной слот для {}:",
+        'choose_end_time': "Начало: {start}. Выберите время окончания:",
+        'back_to_slots': "⬅️ К выбору времени начала",
         'no_free_hours': "На этот день нет свободных часов. Попробуйте другую дату.",
         'back_to_date': "⬅️ К выбору даты",
 
@@ -71,8 +75,8 @@ TEXTS = {
         'days_taken': "Некоторые дни уже заняты: {}. Выберите другой диапазон.",
 
         # Подтверждение брони
-        'booking_summary': "✅ Подтверждение бронирования:\nМесто: {workspace}\nТип: {type}\n{description}\nСумма: {total} руб{stars_line}\n\nВыберите способ оплаты:",
-        'booking_summary_stars': " (или {stars} звёзд, если выбран Telegram Stars)",
+        'booking_summary': "Подтверждение бронирования:\n\nМесто: {workspace}\nТип: {type}\n{description}\n\nСумма: {total:.0f} {currency}{stars_line}\n\nВыберите способ оплаты:",
+        'booking_summary_stars': "\nStars: {stars:.0f} ⭐",
         'daily_description': "Весь день {date} (6:00-22:00)",
         'multiday_description': "с {start} по {end} (ежедневно 6:00-22:00)",
         'pay_stars': "⭐ Оплатить Stars",
@@ -89,16 +93,17 @@ TEXTS = {
         'booking_already_processed': "Бронь уже обработана.",
 
         # Напоминания
-        'reminder_question': "✅ Бронь успешно оплачена!\nКак вы хотите получить напоминание о брони?",
+        'booking_paid_text': "✅ Бронь успешно оплачена!\n\nМесто: {workspace}\n{description}\n\nДо встречи в коворкинге «Девичьи дела»!",
+        'set_reminder_btn': "⏰ Добавить напоминание",
+        'reminder_question': "Как вы хотите получить напоминание о брони?",
         'reminder_telegram_btn': "📱 Напомнить в Telegram",
         'reminder_calendar_btn': "📅 Добавить в календарь",
-        'reminder_none_btn': "❌ Никак",
         'reminder_choose_time': "Выберите, за сколько отправить напоминание:",
         'reminder_1h': "1 час",
         'reminder_3h': "3 часа",
         'reminder_1d': "1 день",
         'reminder_too_late': "До начала брони слишком мало времени, чтобы запланировать напоминание.",
-        'reminder_scheduled': "✅ Напоминание запланировано за {hours} час(ов) до начала брони.",
+        'reminder_scheduled': "✅ Напоминание запланировано за {hours_label} до начала брони.",
         'reminder_calendar_added': "Нажмите на кнопку, чтобы добавить событие в календарь.\nЕсли кнопка не работает, файл также доступен по ссылке.",
         'reminder_no_response': "Хорошо, будем вас ждать в коворкинге «Девичьи дела»!\n📍 Адрес: ул. Республики, 26\n🕒 Работаем ежедневно с 6:00 до 22:00\n\nДо встречи!",
         'add_to_calendar_btn': "📅 Добавить в календарь",
@@ -118,16 +123,24 @@ TEXTS = {
             'Парикмахерское кресло 2': 'Парикмахерское кресло 2',
             'Гримерка 1': 'Гримерка 1',
             'Гримерка 2': 'Гримерка 2',
+            '202 Кушетка 1': '202 Кушетка 1',
+            '202 Кушетка 2': '202 Кушетка 2',
+            '202 Гримерка 1': '202 Гримерка 1',
+            '202 Гримерка 2': '202 Гримерка 2',
+            '201 Гримерка 1': '201 Гримерка 1',
+            '201 Гримерка 2': '201 Гримерка 2',
+            '201 Кресло 1': '201 Кресло 1',
+            '201 Кресло 2': '201 Кресло 2',
         },
 
         'price_per_hour': 'Почасово',
         'price_per_day': 'На день',
         'price_per_multi_day': 'Многодневная',
-        'booking_expired': 'Бронь устарела или была удалена.',
-        'booking_already_processed': 'Бронь уже обработана.',
-        
+        'currency_per_hour': 'руб/час',
+        'currency_rub': 'руб',
+        'currency_per_day': 'руб/сутки',
+
         # Обработчики
-        'choose_concrete_date': "Выберите конкретное число",
         'slot_already_taken': "К сожалению, этот час уже занят. Выберите другое время.",
         'booking_conflict': "❌ К сожалению, это время уже занято. Пожалуйста, выберите другое.",
         'booking_data_not_found': "Ошибка: данные брони не найдены.",
@@ -144,10 +157,7 @@ TEXTS = {
         'booking_cancelled': 'Бронь отменена.',
         'booking_already_paid': 'Бронь уже оплачена, отмена невозможна.',
         'day_already_started': 'Сегодняшний день уже начался, забронировать его нельзя. Выберите другой день.',
-        # НЕ ПЕРЕВЕДЕНО
-        'workspace_data_lost': '❌ Данные о рабочем месте потеряны. Пожалуйста, начните бронирование заново.',
         'return_to_menu_hint': 'Нажмите кнопку ниже, чтобы вернуться в главное меню.',
-
     },
     'en': {
         # Main menu
@@ -155,7 +165,7 @@ TEXTS = {
         'main_menu_caption': "Choose an action:",
         'book_btn': "📅 Book",
         'about_btn': "💬 About coworking",
-        'lang_btn': "🇷🇺/🇺🇸 Language",
+        'lang_btn': "🇷🇺/🇬🇧 Language",
         'back_btn': "⬅️ Back",
         'main_menu_btn': "🏠 Main menu",
 
@@ -168,8 +178,9 @@ TEXTS = {
         # Language
         'choose_language': "Choose language:",
         'lang_changed': "Language successfully changed to English.",
+        'lang_already_selected': "This language is already selected.",
         'lang_ru': "🇷🇺 Русский",
-        'lang_en': "🇺🇸 English",
+        'lang_en': "🇬🇧 English",
 
         # Categories
         'choose_category': "Choose a workspace category:",
@@ -185,15 +196,15 @@ TEXTS = {
 
         # Select workspace
         'select_workspace': "Select a workspace:",
-        'prev_category': "⬅️ Previous category",
-        'next_category': "Next category ➡️",
+        'prev_category': "⬅️ Previous",
+        'next_category': "Next ➡️",
         'back_to_categories': "⬅️ Back to categories",
 
         # Rental types
         'choose_rental_type': "Choose rental type:",
-        'hourly': "⏱ Hourly (1 hour)",
-        'daily': "☀️ Full day (6:00-22:00)",
-        'multiday': "📅 Several days (fixed rate)",
+        'hourly': "Hourly",
+        'daily': "Full day (6:00–22:00)",
+        'multiday': "Several days",
         'back_to_workspace': "⬅️ Back to workspace",
 
         # Calendar
@@ -206,11 +217,14 @@ TEXTS = {
         'months': ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
         'weekdays_short': ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
         'back_to_start_date': "⬅️ Back to start date",
-        'choose_concrete_date': "Select a specific date",  
+        'choose_concrete_date': "Select a specific date",
+        'past_date': "This date has already passed and cannot be booked.",
 
         # Choose time (hourly)
         'choose_start_time': "Choose start time for {}:",
-        'choose_duration': "You selected start at {}. Choose duration:",
+        'choose_slot': "Choose a time slot for {}:",
+        'choose_end_time': "Start: {start}. Select end time:",
+        'back_to_slots': "⬅️ Back to start time",
         'no_free_hours': "No free hours on this day. Try another date.",
         'back_to_date': "⬅️ Back to date",
 
@@ -219,15 +233,8 @@ TEXTS = {
         'days_taken': "Some days are already taken: {}. Choose another range.",
 
         # Booking confirmation
-        'booking_summary': (
-        "✅ Booking confirmation:\n"
-        "Workspace: {workspace}\n"
-        "Type: {type}\n"
-        "{description}\n"
-        "Amount: {total} RUB{stars_line}\n\n"
-        "Choose payment method:"
-        ),
-        'booking_summary_stars': " (or {stars} stars if Telegram Stars selected)",
+        'booking_summary': "Booking confirmation:\n\nWorkspace: {workspace}\nType: {type}\n{description}\n\nAmount: {total:.0f} {currency}{stars_line}\n\nChoose payment method:",
+        'booking_summary_stars': "\nStars: {stars:.0f} ⭐",
         'daily_description': "Full day {date} (6:00-22:00)",
         'multiday_description': "from {start} to {end} (daily 6:00-22:00)",
         'pay_stars': "⭐ Pay with Stars",
@@ -244,16 +251,17 @@ TEXTS = {
         'booking_already_processed': "Booking already processed.",
 
         # Reminders
-        'reminder_question': "✅ Booking paid successfully!\nHow would you like to receive a reminder?",
+        'booking_paid_text': "✅ Booking paid successfully!\n\nWorkspace: {workspace}\n{description}\n\nSee you at Devichyi dela coworking!",
+        'set_reminder_btn': "⏰ Set reminder",
+        'reminder_question': "How would you like to receive a reminder?",
         'reminder_telegram_btn': "📱 Telegram reminder",
         'reminder_calendar_btn': "📅 Add to calendar",
-        'reminder_none_btn': "❌ No reminder",
         'reminder_choose_time': "Choose how long before to send reminder:",
         'reminder_1h': "1 hour",
         'reminder_3h': "3 hours",
         'reminder_1d': "1 day",
         'reminder_too_late': "There is too little time before the booking to schedule a reminder.",
-        'reminder_scheduled': "✅ Reminder scheduled {hours} hour(s) before the booking.",
+        'reminder_scheduled': "✅ Reminder scheduled {hours_label} before the booking.",
         'reminder_calendar_added': "Click the button below to add event to your calendar.\nIf the button doesn't work, the file is also available via the link.",
         'reminder_no_response': "Okay, we will be waiting for you at 'Devichyi dela' coworking!\n📍 Address: 26 Respubliki St.\n🕒 Open daily from 6:00 to 22:00\n\nSee you!",
         'add_to_calendar_btn': "📅 Add to calendar",
@@ -273,15 +281,23 @@ TEXTS = {
             'Парикмахерское кресло 2': 'Hairdresser chair 2',
             'Гримерка 1': 'Makeup room 1',
             'Гримерка 2': 'Makeup room 2',
+            '202 Кушетка 1': '202 Couch 1',
+            '202 Кушетка 2': '202 Couch 2',
+            '202 Гримерка 1': '202 Makeup room 1',
+            '202 Гримерка 2': '202 Makeup room 2',
+            '201 Гримерка 1': '201 Makeup room 1',
+            '201 Гримерка 2': '201 Makeup room 2',
+            '201 Кресло 1': '201 Chair 1',
+            '201 Кресло 2': '201 Chair 2',
         },
         'price_per_hour': 'Hourly rate',
         'price_per_day': 'Daily rate',
         'price_per_multi_day': 'Multi-day rate',
-        'booking_expired': 'Booking expired or was deleted.',
-        'booking_already_processed': 'Booking already processed.',
+        'currency_per_hour': 'RUB/h',
+        'currency_rub': 'RUB',
+        'currency_per_day': 'RUB/day',
 
         # Handlers
-        'choose_concrete_date': "Select a specific date",
         'slot_already_taken': "Sorry, this hour is already taken. Choose another time.",
         'booking_conflict': "❌ Unfortunately, this time slot is already taken. Please choose another.",
         'booking_data_not_found': "Error: booking data not found.",
@@ -295,7 +311,9 @@ TEXTS = {
         'workspace_data_lost': "Workspace data lost. Please start booking again.",
         'cancel_booking_btn': '❌ Cancel booking',
         'cancel_booking_prompt': 'If you changed your mind, you can cancel the booking before it is paid.',
+        'booking_cancelled': 'Booking cancelled.',
+        'booking_already_paid': 'Booking is already paid and cannot be cancelled.',
+        'day_already_started': 'Today has already started and cannot be booked. Please choose another day.',
         'return_to_menu_hint': 'Press the button below to return to the main menu.',
-
     }
 }

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta, date, time
 import calendar
@@ -19,16 +20,11 @@ from aiogram.types import (
     PreCheckoutQuery, SuccessfulPayment
 )
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-
 from database import create_pool
-from dotenv import load_dotenv
-from icalendar import Calendar, Event, Alarm
-from locales import TEXTS
 
 load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-# ADMIN_ID=os.getenv('ADMIN_ID')
-ADMIN_ID=621695401
+ADMIN_ID = int(os.getenv('ADMIN_ID', '621695401'))
 COWORKING_LATITUDE = float(os.getenv("COWORKING_LATITUDE", "0.0"))
 COWORKING_LONGITUDE = float(os.getenv("COWORKING_LONGITUDE", "0.0"))
 COWORKING_TITLE = os.getenv("COWORKING_TITLE", "Девичьи дела")
@@ -46,7 +42,6 @@ WORK_END_HOUR = 22
 SLOT_DURATION = 1
 
 DEFAULT_IMAGE = "AgACAgIAAxkBAAIKGWoDdeLstxuZ4sNbiCKgZpNMQ_YjAAKHGmsbxScZSIR9rmw9nxejAQADAgADeQADOwQ"
-PUBLIC_URL = "https://ваш-домен.ngrok.io"   # замените на ваш реальный URL
 
 # ---------- Список категорий ----------
 CATEGORIES = [
@@ -60,8 +55,9 @@ MONTHS = [
     "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
     "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"
 ]
-CURRENT_YEAR = datetime.now().year
-YEARS = list(range(CURRENT_YEAR - 1, CURRENT_YEAR + 5))
+def get_years():
+    y = datetime.now().year
+    return list(range(y - 1, y + 5))
 
 # ---------- FSM состояния ----------
 class BookingStates(StatesGroup):
@@ -70,7 +66,7 @@ class BookingStates(StatesGroup):
     choosing_rental_type = State()
     choosing_date = State()
     choosing_time_slot = State()
-    choosing_duration = State()
+    choosing_end_time = State()
     choosing_start_date = State()
     choosing_end_date = State()
     confirming = State()
@@ -79,6 +75,11 @@ class BookingStates(StatesGroup):
     waiting_for_payment = State()
     choosing_reminder_type = State()
     choosing_reminder_time = State()
+
+def _hours_label(n: int, lang: str) -> str:
+    if lang == 'en':
+        return f"{n}h"
+    return f"{n} ч"
 
 # ---------- Вспомогательные функции для локализации ----------
 def get_text(key, lang='ru', **kwargs):
@@ -103,7 +104,6 @@ async def get_user_language(user_id, telegram_language_code=None):
 async def log_event(user_id: int, event_type: str, payload: dict = None):
     try:
         pool = dp['db_pool']
-        import json
         payload_json = json.dumps(payload, ensure_ascii=False) if payload else None
         async with pool.acquire() as conn:
             await conn.execute(
@@ -130,7 +130,10 @@ async def ensure_selected_workspace(state: FSMContext, user_id: int, chat_id: in
             workspace_id = temp['workspace_id']
     if not workspace_id:
         lang = await get_user_language(user_id)
-        await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="back_to_main_from_booking")]
+        ])
+        await bot.send_message(chat_id, get_text('workspace_data_lost', lang), reply_markup=kb)
         await state.clear()
         return False
     pool = dp['db_pool']
@@ -138,7 +141,10 @@ async def ensure_selected_workspace(state: FSMContext, user_id: int, chat_id: in
         row = await conn.fetchrow("SELECT * FROM workspaces WHERE id = $1", workspace_id)
         if not row:
             lang = await get_user_language(user_id)
-            await bot.send_message(chat_id, get_text('workspace_data_lost', lang))
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="back_to_main_from_booking")]
+            ])
+            await bot.send_message(chat_id, get_text('workspace_data_lost', lang), reply_markup=kb)
             await state.clear()
             return False
         ws = dict(row)
@@ -152,7 +158,7 @@ def get_workspace_name(original_name: str, lang: str) -> str:
 # ---------- Клавиатура главного меню ----------
 def main_menu_keyboard(lang='ru'):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=get_text('book_btn', lang), callback_data="main_book", style="primary")],
+        [InlineKeyboardButton(text=get_text('book_btn', lang), callback_data="main_book")],
         [InlineKeyboardButton(text=get_text('about_btn', lang), callback_data="main_about")],
         [InlineKeyboardButton(text=get_text('lang_btn', lang), callback_data="main_lang")]
     ])
@@ -327,6 +333,10 @@ async def language_menu(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data.startswith("lang_"))
 async def set_language(callback: CallbackQuery, state: FSMContext):
     new_lang = callback.data.split("_")[1]
+    current_lang = await get_user_language(callback.from_user.id)
+    if current_lang == new_lang:
+        await callback.answer(get_text('lang_already_selected', current_lang), show_alert=True)
+        return
     pool = dp['db_pool']
     async with pool.acquire() as conn:
         await conn.execute("UPDATE masters SET language = $1 WHERE telegram_id = $2", new_lang, callback.from_user.id)
@@ -402,14 +412,14 @@ async def show_category_album(chat_id: int, state: FSMContext, user_id: int):
         for msg_id in data.get(key, []):
             try:
                 await bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            except:
+            except Exception:
                 pass
     for key in ['control_msg_id', 'detail_control_msg_id']:
         msg_id = data.get(key)
         if msg_id:
             try:
                 await bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            except:
+            except Exception:
                 pass
 
     idx = data.get('category_index', 0) % len(CATEGORIES)
@@ -477,7 +487,7 @@ async def navigate_categories(callback: CallbackQuery, state: FSMContext):
     await show_category_album(callback.message.chat.id, state, callback.from_user.id)
     try:
         await callback.answer()
-    except:
+    except Exception:
         pass
 
 @dp.callback_query(BookingStates.choosing_category, lambda c: c.data.startswith("ws_select_"))
@@ -492,18 +502,18 @@ async def select_workspace_from_list(callback: CallbackQuery, state: FSMContext)
     for msg_id in data.get('album_msg_ids', []):
         try:
             await bot.delete_message(chat_id=callback.message.chat.id, message_id=msg_id)
-        except:
+        except Exception:
             pass
     if data.get('control_msg_id'):
         try:
             await bot.delete_message(chat_id=callback.message.chat.id, message_id=data['control_msg_id'])
-        except:
+        except Exception:
             pass
     await show_workspace_detail(callback.message.chat.id, state, callback.from_user.id)
     await state.set_state(BookingStates.browsing_workspace_detail)
     try:
         await callback.answer()
-    except:
+    except Exception:
         pass
 
 # ---------- Детальный просмотр места ----------
@@ -514,12 +524,12 @@ async def show_workspace_detail(chat_id: int, state: FSMContext, user_id: int):
     for msg_id in data.get('detail_album_msg_ids', []):
         try:
             await bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        except:
+        except Exception:
             pass
     if data.get('detail_control_msg_id'):
         try:
             await bot.delete_message(chat_id=chat_id, message_id=data['detail_control_msg_id'])
-        except:
+        except Exception:
             pass
 
     workspace_id = data['selected_workspace_id']
@@ -535,8 +545,6 @@ async def show_workspace_detail(chat_id: int, state: FSMContext, user_id: int):
         await bot.send_message(chat_id, get_text('workspace_not_found', lang))
         await state.clear()
         return
-    if row:
-        logging.info(f"DEBUG: description for id {workspace_id} = {row['description']}")
 
     ws = dict(row)
     await state.update_data(selected_workspace=ws)
@@ -547,9 +555,9 @@ async def show_workspace_detail(chat_id: int, state: FSMContext, user_id: int):
     caption_text = (
         f"<b>{localized_name}</b>\n"
         f"{ws['description']}\n\n"
-        f"{get_text('price_per_hour', lang)}: {ws['price_per_hour']} руб/час\n"
-        f"{get_text('price_per_day', lang)}: {ws['price_per_day']} руб\n"
-        f"{get_text('price_per_multi_day', lang)}: {ws['price_per_multi_day']} руб/сутки"
+        f"{get_text('price_per_hour', lang)}: {ws['price_per_hour']} {get_text('currency_per_hour', lang)}\n"
+        f"{get_text('price_per_day', lang)}: {ws['price_per_day']} {get_text('currency_rub', lang)}\n"
+        f"{get_text('price_per_multi_day', lang)}: {ws['price_per_multi_day']} {get_text('currency_per_day', lang)}"
     )
 
     media_group = []
@@ -566,7 +574,7 @@ async def show_workspace_detail(chat_id: int, state: FSMContext, user_id: int):
     detail_album_msg_ids = [msg.message_id for msg in album_msgs]
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=get_text('hourly', lang), callback_data="rent_hourly", style="primary")],
+        [InlineKeyboardButton(text=get_text('hourly', lang), callback_data="rent_hourly")],
         [InlineKeyboardButton(text=get_text('daily', lang), callback_data="rent_daily")],
         [InlineKeyboardButton(text=get_text('multiday', lang), callback_data="rent_multiday")],
         [InlineKeyboardButton(text=get_text('back_to_categories', lang), callback_data="back_to_categories")],
@@ -585,18 +593,18 @@ async def back_to_categories_from_detail(callback: CallbackQuery, state: FSMCont
     for msg_id in data.get('detail_album_msg_ids', []):
         try:
             await bot.delete_message(chat_id=callback.message.chat.id, message_id=msg_id)
-        except:
+        except Exception:
             pass
     if data.get('detail_control_msg_id'):
         try:
             await bot.delete_message(chat_id=callback.message.chat.id, message_id=data['detail_control_msg_id'])
-        except:
+        except Exception:
             pass
     await show_category_album(callback.message.chat.id, state, callback.from_user.id)
     await state.set_state(BookingStates.choosing_category)
     try:
         await callback.answer()
-    except:
+    except Exception:
         pass
 
 @dp.callback_query(BookingStates.browsing_workspace_detail, lambda c: c.data.startswith("rent_"))
@@ -616,7 +624,8 @@ async def choose_rental_type_from_detail(callback: CallbackQuery, state: FSMCont
         await ask_date(user_id, chat_id, state, for_start=True, control_msg_id=control_msg_id)
         await state.set_state(BookingStates.choosing_start_date)
     else:
-        await callback.answer("Неизвестный тип аренды", show_alert=True)
+        lang = await get_user_language(callback.from_user.id)
+        await callback.answer(get_text('unknown_rental_type', lang), show_alert=True)
         return
     await callback.answer()
 
@@ -639,7 +648,7 @@ def get_month_keyboard(lang='ru'):
 def get_year_keyboard(lang='ru'):
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     row = []
-    for year in YEARS:
+    for year in get_years():
         row.append(InlineKeyboardButton(text=str(year), callback_data=f"year_{year}"))
         if len(row) == 4:
             kb.inline_keyboard.append(row)
@@ -739,7 +748,7 @@ async def calendar_navigation(callback: CallbackQuery, state: FSMContext):
     await show_calendar(callback.from_user.id, callback.message.chat.id, state, year, month, for_start, control_msg_id)
     try:
         await callback.answer()
-    except:
+    except Exception:
         pass
 
 @dp.callback_query(lambda c: c.data.startswith("start_date_") and not c.data.startswith("past_date_"))
@@ -816,7 +825,7 @@ async def back_to_rent_type_from_date(callback: CallbackQuery, state: FSMContext
     control_msg_id = data.get('detail_control_msg_id') or data.get('dynamic_msg_id')
     lang = await get_user_language(callback.from_user.id)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=get_text('hourly', lang), callback_data="rent_hourly", style="primary")],
+        [InlineKeyboardButton(text=get_text('hourly', lang), callback_data="rent_hourly")],
         [InlineKeyboardButton(text=get_text('daily', lang), callback_data="rent_daily")],
         [InlineKeyboardButton(text=get_text('multiday', lang), callback_data="rent_multiday")],
         [InlineKeyboardButton(text=get_text('back_to_categories', lang), callback_data="back_to_categories")],
@@ -849,7 +858,7 @@ async def back_to_rent_type_from_date(callback: CallbackQuery, state: FSMContext
 async def back_to_rent_type_from_calendar(callback: CallbackQuery, state: FSMContext):
     lang = await get_user_language(callback.from_user.id)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=get_text('hourly', lang), callback_data="rent_hourly", style="primary")],
+        [InlineKeyboardButton(text=get_text('hourly', lang), callback_data="rent_hourly")],
         [InlineKeyboardButton(text=get_text('daily', lang), callback_data="rent_daily")],
         [InlineKeyboardButton(text=get_text('multiday', lang), callback_data="rent_multiday")],
         [InlineKeyboardButton(text=get_text('back_to_categories', lang), callback_data="back_to_categories")],
@@ -875,7 +884,8 @@ async def weekday_handler(callback: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("past_date_"))
 async def past_date_handler(callback: CallbackQuery):
-    await callback.answer("Забронировать дату, которая уже прошла, не получится", show_alert=True)
+    lang = await get_user_language(callback.from_user.id)
+    await callback.answer(get_text('past_date', lang), show_alert=True)
 
 
 # ---------- Выбор даты для почасовой/дневной ----------
@@ -893,127 +903,151 @@ async def process_date(callback: CallbackQuery, state: FSMContext):
         await check_daily_availability(callback.message.chat.id, state, callback.from_user.id)
     try:
         await callback.answer()
-    except:
+    except Exception:
         pass
 
 # ---------- Почасовая аренда ----------
 async def show_available_slots(chat_id: int, state: FSMContext, user_id: int):
     lang = await get_user_language(user_id)
-    
-    # Восстанавливаем рабочее место, если нужно
+
     if not await ensure_selected_workspace(state, user_id, chat_id):
         return
-    
+
     data = await state.get_data()
     workspace_id = data['selected_workspace']['id']
     selected_date = data['selected_date']
-    
+    now = datetime.now()
+
+    day_start = datetime.combine(selected_date, time(WORK_START_HOUR, 0))
+    day_end = datetime.combine(selected_date, time(WORK_END_HOUR, 0))
+
     pool = dp['db_pool']
+    async with pool.acquire() as conn:
+        booked = await conn.fetch("""
+            SELECT start_time, end_time FROM bookings
+            WHERE workspace_id = $1
+              AND status IN ('pending', 'paid')
+              AND start_time < $3 AND end_time > $2
+        """, workspace_id, day_start, day_end)
+
+    booked_ranges = [(r['start_time'], r['end_time']) for r in booked]
+
+    def is_free(s, e):
+        return not any(bs < e and be > s for bs, be in booked_ranges)
+
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     slots = []
-    now = datetime.now()
-    async with pool.acquire() as conn:
-        for hour in range(WORK_START_HOUR, WORK_END_HOUR):
-            slot_start = datetime.combine(selected_date, time(hour, 0))
-            slot_end = slot_start + timedelta(hours=1)
+    for hour in range(WORK_START_HOUR, WORK_END_HOUR):
+        slot_start = datetime.combine(selected_date, time(hour, 0))
+        slot_end = slot_start + timedelta(hours=1)
+        if selected_date == now.date() and slot_start <= now + timedelta(minutes=15):
+            continue
+        if is_free(slot_start, slot_end):
+            kb.inline_keyboard.append([InlineKeyboardButton(
+                text=f"{hour:02d}:00",
+                callback_data=f"slot_{slot_start.isoformat()}"
+            )])
+            slots.append(slot_start)
 
-            # Валидация: если дата сегодня и время уже прошло (с запасом 15 минут)
-            if selected_date == now.date() and slot_start <= now + timedelta(minutes=15):
-                continue
-
-            conflicting = await conn.fetchval("""
-                SELECT 1 FROM bookings
-                WHERE workspace_id = $1
-                  AND status IN ('pending', 'paid')
-                  AND tstzrange(start_time, end_time) && tstzrange($2, $3)
-                LIMIT 1
-            """, workspace_id, slot_start, slot_end)
-
-            if not conflicting:
-                btn_text = f"{hour:02d}:00"
-                callback_data = f"slot_{slot_start.isoformat()}"
-                kb.inline_keyboard.append([InlineKeyboardButton(text=btn_text, callback_data=callback_data)])
-                slots.append(slot_start)
-
+    control_msg_id = data.get('dynamic_msg_id')
     if not kb.inline_keyboard:
-        text = get_text('no_free_hours', lang)
         back_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=get_text('back_to_date', lang), callback_data="back_to_date")],
             [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="back_to_main_from_booking")]
         ])
-        control_msg_id = data.get('dynamic_msg_id')
-        await bot.edit_message_text(text=text, chat_id=chat_id, message_id=control_msg_id, reply_markup=back_kb)
+        await bot.edit_message_text(
+            text=get_text('no_free_hours', lang),
+            chat_id=chat_id, message_id=control_msg_id, reply_markup=back_kb
+        )
         return
 
     text = get_text('choose_start_time', lang).format(selected_date.strftime('%d.%m.%Y'))
     kb.inline_keyboard.append([InlineKeyboardButton(text=get_text('back_to_date', lang), callback_data="back_to_date")])
     kb.inline_keyboard.append([InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="back_to_main_from_booking")])
-    control_msg_id = data.get('dynamic_msg_id')
     await bot.edit_message_text(text=text, chat_id=chat_id, message_id=control_msg_id, reply_markup=kb)
-    await state.update_data(slots=slots)
+    await state.update_data(slots=slots, booked_ranges=[(s.isoformat(), e.isoformat()) for s, e in booked_ranges])
 
 
 @dp.callback_query(BookingStates.choosing_time_slot, lambda c: c.data.startswith("slot_"))
 async def process_time_slot(callback: CallbackQuery, state: FSMContext):
     start_iso = callback.data.split("_")[1]
-    start_time = datetime.fromisoformat(start_iso)
-    await state.update_data(selected_start_time=start_time)
+    start_time_val = datetime.fromisoformat(start_iso)
+    await state.update_data(selected_start_time=start_time_val)
+
     data = await state.get_data()
     workspace_id = data['selected_workspace']['id']
+    lang = await get_user_language(callback.from_user.id)
+
+    end_of_work = datetime.combine(start_time_val.date(), time(WORK_END_HOUR, 0))
     pool = dp['db_pool']
-    max_hours = 0
     async with pool.acquire() as conn:
-        for h in range(1, 24 - start_time.hour + 1):
-            end_time = start_time + timedelta(hours=h)
-            if end_time.time() > time(WORK_END_HOUR, 0):
-                break
-            conflicting = await conn.fetchval("""
-                SELECT 1 FROM bookings
-                WHERE workspace_id = $1
-                  AND status IN ('pending', 'paid')
-                  AND tstzrange(start_time, end_time) && tstzrange($2, $3)
-                LIMIT 1
-            """, workspace_id, start_time, end_time)
-            if conflicting:
-                break
-            max_hours = h
+        next_conflict = await conn.fetchval("""
+            SELECT MIN(start_time) FROM bookings
+            WHERE workspace_id = $1
+              AND status IN ('pending', 'paid')
+              AND end_time > $2 AND start_time < $3
+        """, workspace_id, start_time_val, end_of_work)
+
+    if next_conflict:
+        max_hours = min(
+            int((next_conflict - start_time_val).total_seconds() // 3600),
+            WORK_END_HOUR - start_time_val.hour
+        )
+    else:
+        max_hours = WORK_END_HOUR - start_time_val.hour
+
     if max_hours == 0:
-        lang = await get_user_language(callback.from_user.id)
         await callback.answer(get_text('slot_already_taken', lang), show_alert=True)
         return
-    duration_buttons = []
+
+    end_buttons = []
     for h in range(1, max_hours + 1):
-        duration_buttons.append([InlineKeyboardButton(text=f"{h} час", callback_data=f"duration_{h}")])
-    kb = InlineKeyboardMarkup(inline_keyboard=duration_buttons + [
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_slots")],
-        [InlineKeyboardButton(text=get_text('main_menu_btn', 'ru'), callback_data="back_to_main_from_booking")]
+        end_time_val = start_time_val + timedelta(hours=h)
+        label = f"{end_time_val.strftime('%H:%M')}  ({_hours_label(h, lang)})"
+        end_buttons.append([InlineKeyboardButton(text=label, callback_data=f"end_time_{end_time_val.isoformat()}")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=end_buttons + [
+        [InlineKeyboardButton(text=get_text('back_to_slots', lang), callback_data="back_to_slots")],
+        [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="back_to_main_from_booking")]
     ])
-    await callback.message.edit_text(text=f"Вы выбрали начало в {start_time.strftime('%H:%M')}. Укажите длительность:", reply_markup=kb)
-    await state.set_state(BookingStates.choosing_duration)
+    await callback.message.edit_text(
+        text=get_text('choose_end_time', lang).format(start=start_time_val.strftime('%H:%M')),
+        reply_markup=kb
+    )
+    await state.set_state(BookingStates.choosing_end_time)
     await callback.answer()
 
-@dp.callback_query(BookingStates.choosing_duration, lambda c: c.data.startswith("duration_"))
-async def process_duration(callback: CallbackQuery, state: FSMContext):
-    hours = int(callback.data.split("_")[1])
+
+@dp.callback_query(BookingStates.choosing_end_time, lambda c: c.data.startswith("end_time_"))
+async def process_end_time(callback: CallbackQuery, state: FSMContext):
+    end_iso = callback.data.split("end_time_")[1]
+    end_time_val = datetime.fromisoformat(end_iso)
     data = await state.get_data()
-    start_time = data['selected_start_time']
-    end_time = start_time + timedelta(hours=hours)
-    await state.update_data(start_time=start_time, end_time=end_time)
+    start_time_val = data['selected_start_time']
+    await state.update_data(start_time=start_time_val, end_time=end_time_val)
     await confirm_booking(callback.message.chat.id, state, callback.from_user.id)
     await callback.answer()
 
-@dp.callback_query(BookingStates.choosing_duration, lambda c: c.data == "back_to_slots")
+
+@dp.callback_query(BookingStates.choosing_end_time, lambda c: c.data == "back_to_slots")
 async def back_to_slots(callback: CallbackQuery, state: FSMContext):
     await state.set_state(BookingStates.choosing_time_slot)
     data = await state.get_data()
+    lang = await get_user_language(callback.from_user.id)
     selected_date = data['selected_date']
     slots = data.get('slots', [])
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for slot in slots:
-        kb.inline_keyboard.append([InlineKeyboardButton(text=slot.strftime("%H:%M"), callback_data=f"slot_{slot.isoformat()}")])
-    kb.inline_keyboard.append([InlineKeyboardButton(text="⬅️ К выбору даты", callback_data="back_to_date")])
-    kb.inline_keyboard.append([InlineKeyboardButton(text=get_text('main_menu_btn', 'ru'), callback_data="back_to_main_from_booking")])
-    await callback.message.edit_text(text=f"Выберите время начала для {selected_date.strftime('%d.%m.%Y')}:", reply_markup=kb)
+        kb.inline_keyboard.append([InlineKeyboardButton(
+            text=slot.strftime("%H:%M"),
+            callback_data=f"slot_{slot.isoformat()}"
+        )])
+    kb.inline_keyboard.append([InlineKeyboardButton(text=get_text('back_to_date', lang), callback_data="back_to_date")])
+    kb.inline_keyboard.append([InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="back_to_main_from_booking")])
+    await callback.message.edit_text(
+        text=get_text('choose_start_time', lang).format(selected_date.strftime('%d.%m.%Y')),
+        reply_markup=kb
+    )
     await callback.answer()
 
 # ---------- Проверка дневной и многодневной аренды ----------
@@ -1073,20 +1107,14 @@ async def check_multiday_availability(chat_id: int, state: FSMContext, user_id: 
     end_date = data['end_date']
     
     pool = dp['db_pool']
-    current = start_date
-    occupied_days = []
     async with pool.acquire() as conn:
-        while current <= end_date:
-            conflicting = await conn.fetchval("""
-                SELECT 1 FROM bookings
-                WHERE workspace_id = $1
-                  AND status IN ('pending', 'paid')
-                  AND DATE(start_time) = $2
-                LIMIT 1
-            """, workspace_id, current)
-            if conflicting:
-                occupied_days.append(current.strftime('%d.%m.%Y'))
-            current += timedelta(days=1)
+        rows = await conn.fetch("""
+            SELECT DISTINCT DATE(start_time) AS booked_day FROM bookings
+            WHERE workspace_id = $1
+              AND status IN ('pending', 'paid')
+              AND DATE(start_time) BETWEEN $2 AND $3
+        """, workspace_id, start_date, end_date)
+    occupied_days = [r['booked_day'].strftime('%d.%m.%Y') for r in rows]
     if occupied_days:
         text = get_text('days_taken', lang).format(', '.join(occupied_days))
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -1161,10 +1189,11 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
         stars_line = ""
 
     text = get_text('booking_summary', lang).format(
-        workspace=ws['name'],
+        workspace=get_workspace_name(ws['name'], lang),
         type=type_name,
         description=description,
         total=total_price,
+        currency=get_text('currency_rub', lang),
         stars_line=stars_line
     )
 
@@ -1192,7 +1221,6 @@ async def confirm_booking(chat_id: int, state: FSMContext, user_id: int):
             )
             await state.clear()
             return
-    logging.info(f"DEBUG: rent_type={rent_type}, stars_price={stars_price}, stars_line='{stars_line}'")
 
     # Если конфликта нет, показываем окно выбора оплаты
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -1250,7 +1278,8 @@ async def process_pay_stars(callback: CallbackQuery, state: FSMContext):
         """, temp['workspace_id'], temp['start_time'], temp['end_time'])
 
         if conflicting:
-            await callback.message.edit_text("❌ К сожалению, это время уже занято. Попробуйте ещё раз.")
+            lang_err = await get_user_language(callback.from_user.id)
+            await callback.message.edit_text(get_text('booking_conflict', lang_err))
             await state.clear()
             await callback.answer()
             return
@@ -1313,14 +1342,17 @@ async def cancel_booking(callback: CallbackQuery, state: FSMContext):
         if status == 'pending':
             await conn.execute("DELETE FROM bookings WHERE id = $1", booking_id)
             await log_event(callback.from_user.id, 'booking_cancelled')
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="back_to_main_from_booking")]
+            ])
             try:
-                await callback.message.delete()
+                await callback.message.edit_text(get_text('booking_cancelled', lang), reply_markup=kb)
             except Exception:
-                pass
-            await callback.answer(get_text('booking_cancelled', lang), show_alert=True)
+                await callback.message.answer(get_text('booking_cancelled', lang), reply_markup=kb)
+            await state.clear()
+            await callback.answer()
         else:
             await callback.answer(get_text('booking_already_paid', lang), show_alert=True)
-    await state.clear()
 
 # Обработка предварительного запроса
 @dp.pre_checkout_query()
@@ -1387,37 +1419,42 @@ async def successful_payment_handler(message: types.Message, state: FSMContext):
         )
     await log_event(message.from_user.id, 'booking_completed', {'booking_id': booking_id, 'payment_method': 'stars'})
 
+    temp = data.get('temp_booking', {})
+    description = temp.get('description', '') if temp else ''
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=get_text('set_reminder_btn', lang), callback_data="add_reminder")],
+        [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="to_main_menu_after_reminder")]
+    ])
+    await message.answer(
+        get_text('booking_paid_text', lang).format(workspace=localized_workspace_name, description=description),
+        reply_markup=kb
+    )
+    await state.set_state(BookingStates.choosing_reminder_type)
+
+
+# ---------- Обработка выбора типа напоминания ----------
+@dp.callback_query(BookingStates.choosing_reminder_type, lambda c: c.data == "add_reminder")
+async def add_reminder_handler(callback: CallbackQuery, state: FSMContext):
+    lang = await get_user_language(callback.from_user.id)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=get_text('reminder_telegram_btn', lang), callback_data="reminder_telegram")],
         [InlineKeyboardButton(text=get_text('reminder_calendar_btn', lang), callback_data="reminder_calendar")],
-        [InlineKeyboardButton(text=get_text('reminder_none_btn', lang), callback_data="reminder_none")]
-    ])
-    await message.answer(get_text('reminder_question', lang), reply_markup=kb)
-    await state.set_state(BookingStates.choosing_reminder_type)
-
-# ---------- Обработка выбора типа напоминания ----------
-@dp.callback_query(BookingStates.choosing_reminder_type, lambda c: c.data == "reminder_none")
-async def reminder_none(callback: CallbackQuery, state: FSMContext):
-    lang = await get_user_language(callback.from_user.id)
-    text = get_text('reminder_no_response', lang)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="to_main_menu_after_reminder")]
     ])
-    await callback.message.edit_text(text, reply_markup=kb)
-    await state.clear()
+    await callback.message.edit_text(get_text('reminder_question', lang), reply_markup=kb)
     await callback.answer()
 
 @dp.callback_query(BookingStates.choosing_reminder_type, lambda c: c.data.startswith("reminder_"))
 async def reminder_type_chosen(callback: CallbackQuery, state: FSMContext):
     lang = await get_user_language(callback.from_user.id)
-    choice = callback.data.split("_")[1]  # 'telegram', 'calendar' или 'none'
+    choice = callback.data.split("_")[1]  # 'telegram' или 'calendar'
     data = await state.get_data()
     start_time = data['booking_start']
-    end_time = data.get('booking_end')   # должно быть сохранено в successful_payment_handler
+    end_time = data.get('booking_end')
     now = datetime.now()
 
     if choice == "calendar":
-        # Генерация .ics файла
         filename = f"booking_{data['booking_id']}.ics"
         filepath = os.path.join("static", filename)
         create_ics_file(filepath, data['workspace_name'], start_time, end_time)
@@ -1452,8 +1489,8 @@ async def reminder_type_chosen(callback: CallbackQuery, state: FSMContext):
             return
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=text, callback_data=f"remind_time_{hours}")]
-            for text, hours in options
+            [InlineKeyboardButton(text=t, callback_data=f"remind_time_{h}")]
+            for t, h in options
         ] + [
             [InlineKeyboardButton(text=get_text('back_to_reminder_type', lang), callback_data="back_to_reminder_type")],
             [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="to_main_menu_after_reminder")]
@@ -1461,18 +1498,6 @@ async def reminder_type_chosen(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(get_text('reminder_choose_time', lang), reply_markup=kb)
         await state.set_state(BookingStates.choosing_reminder_time)
         await callback.answer()
-        return
-
-    elif choice == "none":
-        # Обработчик для "Никак"
-        text = get_text('reminder_no_response', lang)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="to_main_menu_after_reminder")]
-        ])
-        await callback.message.edit_text(text, reply_markup=kb)
-        await state.clear()
-        await callback.answer()
-        return
 
 @dp.callback_query(BookingStates.choosing_reminder_time, lambda c: c.data == "back_to_reminder_type")
 async def back_to_reminder_type(callback: CallbackQuery, state: FSMContext):
@@ -1480,7 +1505,7 @@ async def back_to_reminder_type(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=get_text('reminder_telegram_btn', lang), callback_data="reminder_telegram")],
         [InlineKeyboardButton(text=get_text('reminder_calendar_btn', lang), callback_data="reminder_calendar")],
-        [InlineKeyboardButton(text=get_text('reminder_none_btn', lang), callback_data="reminder_none")]
+        [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="to_main_menu_after_reminder")]
     ])
     await callback.message.edit_text(get_text('reminder_question', lang), reply_markup=kb)
     await state.set_state(BookingStates.choosing_reminder_type)
@@ -1505,7 +1530,7 @@ async def reminder_time_chosen(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=get_text('main_menu_btn', lang), callback_data="to_main_menu_after_reminder")]
     ])
-    await callback.message.edit_text(get_text('reminder_scheduled', lang).format(hours=hours_before), reply_markup=kb)
+    await callback.message.edit_text(get_text('reminder_scheduled', lang).format(hours_label=_hours_label(hours_before, lang)), reply_markup=kb)
     await state.clear()
     await callback.answer()
 
@@ -1563,7 +1588,7 @@ async def expire_booking_task(booking_id: int, chat_id: int, payment_msg_id: int
             await conn.execute("DELETE FROM bookings WHERE id = $1", booking_id)
             try:
                 await bot.delete_message(chat_id=chat_id, message_id=payment_msg_id)
-            except:
+            except Exception:
                 pass
             lang = await get_user_language(user_id)
             kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -1589,7 +1614,6 @@ async def process_mailings():
                 for master in masters:
                     kb = None
                     if row['buttons']:
-                        import json
                         btns = json.loads(row['buttons'])
                         inline_btns = []
                         for btn in btns:
@@ -1633,18 +1657,18 @@ async def back_to_main_from_booking(callback: CallbackQuery, state: FSMContext):
         for msg_id in data.get(key, []):
             try:
                 await bot.delete_message(chat_id=callback.message.chat.id, message_id=msg_id)
-            except:
+            except Exception:
                 pass
     for key in ['control_msg_id', 'detail_control_msg_id']:
         msg_id = data.get(key)
         if msg_id:
             try:
                 await bot.delete_message(chat_id=callback.message.chat.id, message_id=msg_id)
-            except:
+            except Exception:
                 pass
     try:
         await callback.message.delete()
-    except:
+    except Exception:
         pass
     await state.clear()
     await callback.message.answer_photo(
@@ -1694,7 +1718,7 @@ async def debug_unhandled(callback: CallbackQuery):
     lang = await get_user_language(callback.from_user.id)
     try:
         await callback.answer(get_text('unhandled_error', lang), show_alert=True)
-    except:
+    except Exception:
         pass
 
 @dp.message(Command("getfileid"))

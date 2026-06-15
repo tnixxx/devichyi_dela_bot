@@ -44,3 +44,4 @@ logs/
 .coverage
 .pytest_cache/
 htmlcov/
+bot2.py

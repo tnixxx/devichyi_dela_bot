@@ -47,6 +47,19 @@ def get_session(request: Request):
         raise HTTPException(status_code=302, headers={"Location": "/login"})
     return token
 
+def make_csrf_token(session_token: str) -> str:
+    import hmac
+    return hmac.new(SESSION_SECRET.encode(), session_token.encode(), "sha256").hexdigest()[:32]
+
+async def check_csrf(request: Request):
+    session = request.cookies.get("session", "")
+    form = await request.form()
+    token = form.get("csrf_token", "")
+    import hmac
+    expected = hmac.new(SESSION_SECRET.encode(), session.encode(), "sha256").hexdigest()[:32]
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
 def verify_password(password: str, stored_hash: str) -> bool:
     try:
         method_part, salt_b64, key_b64 = stored_hash.split('$')
@@ -413,6 +426,15 @@ label,.form-label{color:var(--mu);font-size:12.5px;font-weight:500}
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+const _csrf='{csrf_token}';
+document.addEventListener('DOMContentLoaded',function(){
+  document.querySelectorAll('form[method="post"],form[method="POST"]').forEach(function(f){
+    if(!f.querySelector('input[name="csrf_token"]')){
+      var h=document.createElement('input');
+      h.type='hidden';h.name='csrf_token';h.value=_csrf;f.appendChild(h);
+    }
+  });
+});
 function applyTheme(t){
   document.documentElement.setAttribute('data-theme',t);
   document.documentElement.setAttribute('data-bs-theme',t);
@@ -461,7 +483,7 @@ async function saveMasterEdit(){
   }
   const r=await fetch(`/admin/masters/edit_ajax/${id}`,{method:'POST',
     headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:new URLSearchParams({full_name,phone,notes})});
+    body:new URLSearchParams({full_name,phone,notes,csrf_token:_csrf})});
   if(r.ok)location.reload();else alert('Ошибка при сохранении');
 }
 
@@ -538,8 +560,10 @@ _ALL_PAGES = ["dashboard", "finance", "analytics", "bookings", "masters", "works
 
 def render(title: str, content: str,
            masters_options_html: str = "", workspaces_options_html: str = "",
-           page: str = "") -> HTMLResponse:
+           page: str = "", auth_token: str = "") -> HTMLResponse:
+    csrf = make_csrf_token(auth_token) if auth_token else ""
     html = BASE_HTML.replace("{title}", title).replace("{content}", content)
+    html = html.replace("{csrf_token}", csrf)
     for p in _ALL_PAGES:
         html = html.replace(f"{{p_{p}}}", "on" if page == p else "")
     html = html.replace("___MASTER_OPTIONS___", masters_options_html)
@@ -678,7 +702,7 @@ async def admin_index(auth=Depends(get_session)):
 }})();
 </script>
 """
-    return render("Дашборд", content, page="dashboard")
+    return render("Дашборд", content, page="dashboard", auth_token=auth)
 
 
 @app.get("/health")
@@ -778,7 +802,7 @@ async def list_workspaces(request: Request, auth=Depends(get_session)):
     </table>
   </div>
 </div>"""
-    return render("Рабочие места", content, page="workspaces")
+    return render("Рабочие места", content, page="workspaces", auth_token=auth)
 
 
 @app.get("/admin/workspaces/add", response_class=HTMLResponse)
@@ -814,7 +838,7 @@ async def add_workspace_form(auth=Depends(get_session)):
     </form>
   </div>
 </div>"""
-    return render("Добавить место", content, page="workspaces")
+    return render("Добавить место", content, page="workspaces", auth_token=auth)
 
 
 @app.post("/admin/workspaces/add")
@@ -824,7 +848,7 @@ async def add_workspace(
     price_per_hour_stars: float = Form(0), price_per_day_stars: float = Form(0),
     price_per_multi_day_stars: float = Form(0),
     image_url_1: str = Form(""), image_url_2: str = Form(""), image_url_3: str = Form(""),
-    auth=Depends(get_session)):
+    auth=Depends(get_session), _csrf=Depends(check_csrf)):
     async with app.state.pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO workspaces (name, description, category, price_per_hour, price_per_day,
@@ -874,7 +898,7 @@ async def edit_workspace_form(request: Request, wid: int, auth=Depends(get_sessi
     </form>
   </div>
 </div>"""
-    return render("Редактировать место", content, page="workspaces")
+    return render("Редактировать место", content, page="workspaces", auth_token=auth)
 
 
 @app.post("/admin/workspaces/edit/{wid}")
@@ -884,7 +908,7 @@ async def edit_workspace(
     price_per_hour_stars: float = Form(0), price_per_day_stars: float = Form(0),
     price_per_multi_day_stars: float = Form(0),
     image_url_1: str = Form(""), image_url_2: str = Form(""), image_url_3: str = Form(""),
-    auth=Depends(get_session)):
+    auth=Depends(get_session), _csrf=Depends(check_csrf)):
     async with app.state.pool.acquire() as conn:
         await conn.execute("""
             UPDATE workspaces SET name=$1,description=$2,category=$3,price_per_hour=$4,price_per_day=$5,
@@ -1071,14 +1095,14 @@ async def list_bookings(request: Request, auth=Depends(get_session)):
     </table>
   </div>
 </div>"""
-    return render("Брони", content, master_options, workspace_options, page="bookings")
+    return render("Брони", content, master_options, workspace_options, page="bookings", auth_token=auth)
 
 
 @app.post("/admin/bookings/add")
 async def add_booking_manual(master_id: int = Form(...), workspace_id: int = Form(...),
                              start_time: str = Form(...), end_time: str = Form(...),
                              total_price: float = Form(...), status: str = Form(...),
-                             auth=Depends(get_session)):
+                             auth=Depends(get_session), _csrf=Depends(check_csrf)):
     start = datetime.fromisoformat(start_time)
     end   = datetime.fromisoformat(end_time)
     async with app.state.pool.acquire() as conn:
@@ -1129,7 +1153,7 @@ async def get_booking_json(bid: int, auth=Depends(get_session)):
 async def edit_booking(bid: int, master_id: int = Form(...), workspace_id: int = Form(...),
                        start_time: str = Form(...), end_time: str = Form(...),
                        total_price: float = Form(...), status: str = Form(...),
-                       auth=Depends(get_session)):
+                       auth=Depends(get_session), _csrf=Depends(check_csrf)):
     start = datetime.fromisoformat(start_time)
     end   = datetime.fromisoformat(end_time)
     async with app.state.pool.acquire() as conn:
@@ -1175,7 +1199,7 @@ async def mailings_list(request: Request, auth=Depends(get_session)):
     </table>
   </div>
 </div>"""
-    return render("Рассылки", content, page="mailings")
+    return render("Рассылки", content, page="mailings", auth_token=auth)
 
 
 @app.get("/admin/mailings/add", response_class=HTMLResponse)
@@ -1197,12 +1221,12 @@ async def add_mailing_form(auth=Depends(get_session)):
     </form>
   </div>
 </div>"""
-    return render("Создать рассылку", content, page="mailings")
+    return render("Создать рассылку", content, page="mailings", auth_token=auth)
 
 
 @app.post("/admin/mailings/add")
 async def add_mailing(text: str = Form(...), buttons: str = Form(""),
-                      scheduled_at: str = Form(""), auth=Depends(get_session)):
+                      scheduled_at: str = Form(""), auth=Depends(get_session), _csrf=Depends(check_csrf)):
     import json
     buttons_json = None
     if buttons.strip():
@@ -1310,12 +1334,12 @@ async def list_masters(request: Request, auth=Depends(get_session)):
     </table>
   </div>
 </div>"""
-    return render("Мастера", content, page="masters")
+    return render("Мастера", content, page="masters", auth_token=auth)
 
 
 @app.post("/admin/masters/add")
 async def add_master(full_name: str = Form(...), phone: str = Form(None),
-                     notes: str = Form(None), auth=Depends(get_session)):
+                     notes: str = Form(None), auth=Depends(get_session), _csrf=Depends(check_csrf)):
     if phone and not validate_phone(phone):
         return HTMLResponse("<script>alert('Некорректный номер телефона'); window.history.back();</script>")
     async with app.state.pool.acquire() as conn:
@@ -1352,7 +1376,7 @@ async def master_info(mid: int, auth=Depends(get_session)):
 @app.post("/admin/masters/edit_ajax/{mid}")
 async def edit_master_ajax(mid: int, full_name: str = Form(None),
                            phone: str = Form(None), notes: str = Form(None),
-                           auth=Depends(get_session)):
+                           auth=Depends(get_session), _csrf=Depends(check_csrf)):
     if phone and not validate_phone(phone):
         return JSONResponse({"success": False, "error": "Некорректный номер телефона"}, status_code=400)
     async with app.state.pool.acquire() as conn:
@@ -1546,7 +1570,7 @@ async def finance(request: Request, auth=Depends(get_session)):
     </div>
   </div>
 </div>"""
-    return render("Финансы", content, page="finance")
+    return render("Финансы", content, page="finance", auth_token=auth)
 
 
 LOGIN_HTML = """<!DOCTYPE html>
@@ -1834,7 +1858,7 @@ async def admin_analytics(auth=Depends(get_session)):
 {activity_card}
 {users_table}"""
 
-    return render("Аналитика поведения", content, page="analytics")
+    return render("Аналитика поведения", content, page="analytics", auth_token=auth)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1860,7 +1884,7 @@ async def login_submit(request: Request, password: str = Form(...)):
 
 
 @app.post("/logout")
-async def logout():
+async def logout(_csrf=Depends(check_csrf)):
     response = RedirectResponse(url="/login", status_code=303)
     response.delete_cookie("session")
     return response
@@ -1916,7 +1940,7 @@ async def logs_dashboard(auth=Depends(get_session)):
   arb.addEventListener('click',toggleAR);
   toggleAR();
 </script>"""
-    return render("Логи", content, page="logs")
+    return render("Логи", content, page="logs", auth_token=auth)
 
 
 @app.get("/admin/api/logs")
